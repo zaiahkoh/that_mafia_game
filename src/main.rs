@@ -1,3 +1,7 @@
+use pretty_env_logger;
+use log;
+
 fn main() {
-    println!("Hello, world!");
+    pretty_env_logger::init();
+    log::info!("Starting ");
 }
