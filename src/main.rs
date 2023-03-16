@@ -4,6 +4,8 @@ use std::sync::Arc;
 use std::{error::Error, sync::Mutex};
 use teloxide::{prelude::*, utils::command::BotCommands};
 
+type GameState = Arc<Mutex<Option<Game>>>;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     pretty_env_logger::init();
@@ -11,11 +13,33 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let players = Arc::new(Mutex::new(Option::<Game>::None));
 
-    let handler = Update::filter_message().branch(
-        dptree::entry()
-            .filter_command::<StartCommand>()
-            .endpoint(start_command_handler),
-    );
+    let handler = Update::filter_message()
+        .branch(
+            dptree::entry()
+                .filter_command::<StartCommand>()
+                .endpoint(start_command_handler),
+        )
+        .branch(
+            dptree::filter(|gs: GameState, msg: Message| {
+                if let Some(g) = gs.lock().unwrap().as_ref() {
+                    return g.players.iter().any(|p| p.id == msg.chat.id);
+                } else {
+                    false
+                }
+            })
+            .endpoint(|gs: GameState, bot: Bot, msg: Message| async move {
+                bot.send_message(
+                    msg.chat.id,
+                    format!(
+                        "Hello, you are in #{}",
+                        gs.lock().unwrap().as_ref().unwrap().code
+                    ),
+                )
+                .await?;
+
+                Ok(())
+            }),
+        );
 
     let bot = Bot::from_env();
     Dispatcher::builder(bot, handler)
@@ -40,7 +64,7 @@ enum StartCommand {
 }
 
 async fn start_command_handler(
-    game: Arc<Mutex<Option<Game>>>,
+    game: GameState,
     bot: Bot,
     msg: Message,
     cmd: StartCommand,
