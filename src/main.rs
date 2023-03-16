@@ -1,9 +1,8 @@
 use log;
 use pretty_env_logger;
-use teloxide::macros::BotCommands;
 use std::sync::Arc;
 use std::{error::Error, sync::Mutex};
-use teloxide::{prelude::*};
+use teloxide::{prelude::*, utils::command::BotCommands};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -12,21 +11,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let players = Arc::new(Mutex::new(Option::<Game>::None));
 
-    let handler = Update::filter_message().endpoint(msg_handler);
+    let handler = Update::filter_message().branch(
+        dptree::entry()
+            .filter_command::<StartCommand>()
+            .endpoint(start_command_handler),
+    );
 
     let bot = Bot::from_env();
-    Dispatcher::builder(
-        bot,
-        Update::filter_message().endpoint(msg_handler),
-    )
-    .dependencies(dptree::deps![players])
-    .enable_ctrlc_handler()
-    .build()
-    .dispatch()
-    .await;
+    Dispatcher::builder(bot, handler)
+        .dependencies(dptree::deps![players])
+        .enable_ctrlc_handler()
+        .build()
+        .dispatch()
+        .await;
 
     Ok(())
 }
+
 #[derive(BotCommands, Clone)]
 #[command(rename_rule = "lowercase", description = "Start commands")]
 enum StartCommand {
@@ -34,8 +35,24 @@ enum StartCommand {
     Help,
     #[command(description = "host a game")]
     Host,
-    #[command(parse_with = "split", description = "join a game")]
-    Join,
+    #[command(description = "join a game")]
+    Join { code: i32 },
+}
+
+async fn start_command_handler(
+    game: Arc<Mutex<Option<Game>>>,
+    bot: Bot,
+    msg: Message,
+    cmd: StartCommand,
+) -> Result<(), teloxide::RequestError> {
+    let text = match cmd {
+        StartCommand::Help => StartCommand::descriptions().to_string(),
+        _ => String::from("not recognised"),
+    };
+
+    bot.send_message(msg.chat.id, text).await?;
+
+    Ok(())
 }
 
 struct Player {
