@@ -11,7 +11,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     pretty_env_logger::init();
     log::info!("Starting That Mafia Game Bot");
 
-    let players = Arc::new(Mutex::new(Option::<Game>::None));
+    let game_state = Arc::new(Mutex::new(Option::<Game>::None));
 
     let handler = Update::filter_message()
         .branch(
@@ -43,7 +43,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let bot = Bot::from_env();
     Dispatcher::builder(bot, handler)
-        .dependencies(dptree::deps![players])
+        .dependencies(dptree::deps![game_state])
         .enable_ctrlc_handler()
         .build()
         .dispatch()
@@ -83,6 +83,7 @@ async fn start_command_handler(
                         players: vec![Player {
                             id: msg.chat.id,
                             username: String::from(msg.chat.username().unwrap()),
+                            role: None,
                         }],
                         code: 123,
                     });
@@ -101,6 +102,7 @@ async fn start_command_handler(
                     p.push(Player {
                         id: msg.chat.id,
                         username: String::from(msg.chat.username().unwrap()),
+                        role: None,
                     });
                     format!("Joining game #{}", asdf)
                 }
@@ -116,9 +118,21 @@ async fn start_command_handler(
     Ok(())
 }
 
+enum Role {
+    Mafia,
+    Jester,
+    Detective,
+    Doctor,
+    Medium,
+    Escort,
+    Vigilante,
+    Twin,
+}
+
 struct Player {
     id: ChatId,
     username: String,
+    role: Option<Role>,
 }
 
 struct Game {
