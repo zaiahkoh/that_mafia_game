@@ -8,3 +8,6 @@ pub enum State {
         host: ChatId
     },
 }
+
+pub mod game;
+pub mod lobby;

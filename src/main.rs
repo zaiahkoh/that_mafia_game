@@ -3,6 +3,7 @@ use pretty_env_logger;
 use std::sync::Arc;
 use std::{error::Error, sync::Mutex};
 use teloxide::{prelude::*, utils::command::BotCommands};
+use that_mafia_game::game::roles::Role;
 
 type GameState = Arc<Mutex<Option<Game>>>;
 
@@ -116,17 +117,6 @@ async fn start_command_handler(
     bot.send_message(msg.chat.id, text).await?;
 
     Ok(())
-}
-
-enum Role {
-    Mafia,
-    Jester,
-    Detective,
-    Doctor,
-    Medium,
-    Escort,
-    Vigilante,
-    Twin,
 }
 
 struct Player {
