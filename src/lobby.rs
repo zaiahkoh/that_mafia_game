@@ -1,15 +1,15 @@
-mod local_lobby_manager;
+pub mod local_lobby_manager;
 
 use teloxide::prelude::*;
 
-#[derive(Eq, Hash, PartialEq, Copy, Clone)]
+#[derive(Eq, Hash, PartialEq, Copy, Clone, derive_more::Display)]
 pub struct LobbyId(pub i32);
 
 // Provides a snapshot of a lobby's details
 pub struct Lobby {
-    host: ChatId,
-    players: Vec<ChatId>,
-    lobby_id: LobbyId,
+    pub host: ChatId,
+    pub players: Vec<ChatId>,
+    pub lobby_id: LobbyId,
 }
 
 pub trait LobbyManager {
