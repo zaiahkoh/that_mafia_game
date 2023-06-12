@@ -24,7 +24,7 @@ impl LobbyManager for LocalLobbyManager {
     }
 
     fn create_lobby(&mut self, host_chat_id: ChatId) -> Result<&Lobby, &'static str> {
-        if let None = self.get_chats_lobby(host_chat_id) {
+        if let Some(_) = self.get_chats_lobby(host_chat_id) {
             return Err("Player is already in a lobby");
         }
 
@@ -46,6 +46,10 @@ impl LobbyManager for LocalLobbyManager {
     }
 
     fn join_lobby(&mut self, lobby_id: LobbyId, chat_id: ChatId) -> Result<&Lobby, &'static str> {
+        if let Some(_) = self.get_chats_lobby(chat_id) {
+            return Err("Player is already in a lobby");
+        }
+
         match self.lobbies.get_mut(&lobby_id) {
             Some(lobby) => {
                 lobby.players.push(chat_id);

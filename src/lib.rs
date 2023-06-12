@@ -1,4 +1,4 @@
-use lobby::{LobbyId, LobbyManagerWrapper};
+use lobby::LobbyId;
 use lobby::{local_lobby_manager::LocalLobbyManager, LobbyManager};
 use std::sync::Arc;
 use std::{error::Error, sync::Mutex};
@@ -16,13 +16,13 @@ pub enum State {
     },
 }
 
-struct BotState {
-    lobby_manager: LobbyManagerWrapper<dyn LobbyManager>,
+struct BotState<L: LobbyManager> {
+    lobby_manager: L,
 }
 
-type AsyncBotState = Arc<Mutex<BotState>>;
+type AsyncBotState = Arc<Mutex<BotState<LocalLobbyManager>>>;
 
-async fn start_mafia_bot() -> Result<(), Box<dyn Error>> {
+pub async fn start_mafia_bot() -> Result<(), Box<dyn Error>> {
     pretty_env_logger::init();
     log::info!("Starting That Mafia Game Bot");
 
@@ -30,18 +30,21 @@ async fn start_mafia_bot() -> Result<(), Box<dyn Error>> {
         lobby_manager: LocalLobbyManager::new(),
     }));
 
-
-    let handler = Update::filter_message().branch(
-        dptree::entry()
-            .filter_command::<MainMenuCommand>()
-            .endpoint(main_menu_handler),
-    ).branch(
-        dptree::entry()
-        .endpoint(main_menu_handler),
-    );
+    let handler = Update::filter_message()
+        .branch(
+            dptree::entry()
+                .filter_command::<MainMenuCommand>()
+                .endpoint(main_menu_handler),
+        )
+        .branch(dptree::entry().endpoint(main_menu_handler));
 
     let bot = Bot::from_env();
-    // Dispatcher::builder(bot, )
+    Dispatcher::builder(bot, handler)
+        .dependencies(dptree::deps![bot_state])
+        .enable_ctrlc_handler()
+        .build()
+        .dispatch()
+        .await;
 
     Ok(())
 }
@@ -82,7 +85,7 @@ async fn main_menu_handler(
                 .lobby_manager
                 .join_lobby(LobbyId(code), msg.chat.id)
             {
-                Ok(lobby) => {
+                Ok(_) => {
                     format!("Joined lobby {}", code)
                 }
                 Err(message) => format!("Encountered error: {}", message),
