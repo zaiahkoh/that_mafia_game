@@ -1,4 +1,4 @@
-use lobby::LobbyId;
+use lobby::{LobbyId, LobbyManagerWrapper};
 use lobby::{local_lobby_manager::LocalLobbyManager, LobbyManager};
 use std::sync::Arc;
 use std::{error::Error, sync::Mutex};
@@ -17,7 +17,7 @@ pub enum State {
 }
 
 struct BotState {
-    lobby_manager: LocalLobbyManager,
+    lobby_manager: LobbyManagerWrapper<dyn LobbyManager>,
 }
 
 type AsyncBotState = Arc<Mutex<BotState>>;

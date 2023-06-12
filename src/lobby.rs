@@ -23,3 +23,7 @@ pub trait LobbyManager {
     // If the host quits, then a remaining player should be randomly chosen to be the new host
     fn quit_lobby(&mut self, chat_id: ChatId) -> Result<(), &'static str>;
 }
+
+pub struct LobbyManagerWrapper<T> where T : LobbyManager{
+    lobby_manager: T,
+}
