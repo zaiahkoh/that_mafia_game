@@ -36,7 +36,7 @@ pub async fn start_mafia_bot() -> Result<(), Box<dyn Error>> {
                 .filter_command::<MainMenuCommand>()
                 .endpoint(main_menu_handler),
         )
-        .branch(dptree::entry().endpoint(main_menu_handler));
+        .branch(dptree::entry().filter());
 
     let bot = Bot::from_env();
     Dispatcher::builder(bot, handler)
@@ -47,6 +47,16 @@ pub async fn start_mafia_bot() -> Result<(), Box<dyn Error>> {
         .await;
 
     Ok(())
+}
+
+async fn lobby_handler(
+    bot_state: AsyncBotState,
+    bot: Bot,
+    msg: Message,
+) -> Handler<'static, DependencyMap, Result<(), teloxide::RequestError>, teloxide::dispatching::DpHandlerDescription> {
+    dptree::filter(|msg: Message, bot_state: Arc<Mutex<BotState<LocalLobbyManager>>>| {
+        true
+    })
 }
 
 #[derive(BotCommands, Clone)]
