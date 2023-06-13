@@ -36,7 +36,7 @@ pub async fn start_mafia_bot() -> Result<(), Box<dyn Error>> {
                 .filter_command::<MainMenuCommand>()
                 .endpoint(main_menu_handler),
         )
-        .branch(dptree::entry().filter());
+        .branch(get_lobby_handler());
 
     let bot = Bot::from_env();
     Dispatcher::builder(bot, handler)
@@ -49,14 +49,44 @@ pub async fn start_mafia_bot() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[derive(BotCommands, Clone)]
+#[command(rename_rule = "lowercase", description = "Lobby commands")]
+enum LobbyCommand {
+    #[command(description = "Shows the message.")]
+    Help,
+    #[command(description = "Quit lobby")]
+    Quit,
+}
+
+fn get_lobby_handler() -> Handler<
+    'static,
+    DependencyMap,
+    Result<(), teloxide::RequestError>,
+    teloxide::dispatching::DpHandlerDescription,
+> {
+    dptree::filter(lobby_check)
+        .endpoint(lobby_handler)
+}
+
+fn lobby_check(
+    msg: Message,
+    bot_state: AsyncBotState,
+) -> bool {
+    let mut state_lock = bot_state.lock().unwrap();
+    if let Some(_) = state_lock.lobby_manager.get_chats_lobby(msg.chat.id) {
+        return true;
+    } else {
+        return false;
+    }
+}
+
 async fn lobby_handler(
     bot_state: AsyncBotState,
     bot: Bot,
     msg: Message,
-) -> Handler<'static, DependencyMap, Result<(), teloxide::RequestError>, teloxide::dispatching::DpHandlerDescription> {
-    dptree::filter(|msg: Message, bot_state: Arc<Mutex<BotState<LocalLobbyManager>>>| {
-        true
-    })
+    cmd: MainMenuCommand,
+) -> Result<(), teloxide::RequestError> {
+    Ok(())
 }
 
 #[derive(BotCommands, Clone)]
@@ -64,9 +94,9 @@ async fn lobby_handler(
 enum MainMenuCommand {
     #[command(description = "Shows this message.")]
     Help,
-    #[command(description = "Host a game")]
+    #[command(description = "Host a lobby")]
     Host,
-    #[command(description = "Join a game")]
+    #[command(description = "Join a lobby")]
     Join { code: i32 },
 }
 
