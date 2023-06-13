@@ -21,5 +21,5 @@ pub trait LobbyManager {
     fn join_lobby(&mut self, lobby_id: LobbyId, chat_id: ChatId) -> Result<&Lobby, &'static str>;
 
     // If the host quits, then a remaining player should be randomly chosen to be the new host
-    fn quit_lobby(&mut self, chat_id: ChatId) -> Result<(), &'static str>;
+    fn quit_lobby(&mut self, chat_id: ChatId) -> Result<LobbyId, &'static str>;
 }

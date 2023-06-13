@@ -85,12 +85,16 @@ async fn lobby_handler(
     let text = match cmd {
         LobbyCommand::Help => LobbyCommand::descriptions().to_string(),
         LobbyCommand::Quit => {
-            // let mut state_lock = bot_state.lock().unwrap();
-            // let mut lobby_manager = state_lock.lobby_manager;
-            // let lobby = lobby_manager.get_chats_lobby(msg.chat.id).unwrap();
-            // lobby_manager.quit_lobby(msg.chat.id);
-            format!("Quited lobby: {}", 123)
-        },        
+            let mut state_lock = bot_state.lock().unwrap();
+            state_lock
+                .lobby_manager
+                .get_chats_lobby(msg.chat.id)
+                .unwrap();
+            match state_lock.lobby_manager.quit_lobby(msg.chat.id) {
+                Ok(lobby_id) => format!("Quit lobby: {}", lobby_id),
+                Err(message) => format!("Encountered error: {}", message),
+            }
+        }
     };
 
     bot.send_message(msg.chat.id, text).await?;
