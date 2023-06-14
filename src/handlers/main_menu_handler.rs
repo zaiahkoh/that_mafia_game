@@ -44,7 +44,10 @@ async fn main_menu_handler(
         MainMenuCommand::Host => {
             let mut state_lock = bot_state.lock().unwrap();
 
-            match state_lock.lobby_manager.create_lobby(msg.chat.id) {
+            match state_lock.lobby_manager.create_lobby(Player {
+                player_id: msg.chat.id,
+                username: String::from(msg.chat.username().unwrap_or("(no name)")),
+            }) {
                 Ok(lobby) => {
                     format!("Created new lobby. Code: {}", lobby.lobby_id)
                 }
@@ -54,10 +57,13 @@ async fn main_menu_handler(
         MainMenuCommand::Join { code } => {
             let mut state_lock = bot_state.lock().unwrap();
 
-            match state_lock
-                .lobby_manager
-                .join_lobby(LobbyId(code), msg.chat.id)
-            {
+            match state_lock.lobby_manager.join_lobby(
+                LobbyId(code),
+                Player {
+                    player_id: msg.chat.id,
+                    username: String::from(msg.chat.username().unwrap_or("(no name)")),
+                },
+            ) {
                 Ok(_) => {
                     format!("Joined lobby {}", code)
                 }

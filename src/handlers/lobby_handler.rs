@@ -26,6 +26,8 @@ pub fn get_lobby_handler() -> Handler<
 enum LobbyCommand {
     #[command(description = "Shows the message.")]
     Help,
+    #[command(description = "List players in the lobby")]
+    Players,
     #[command(description = "Quit lobby")]
     Quit,
 }
@@ -38,6 +40,29 @@ async fn lobby_handler(
 ) -> Result<(), teloxide::RequestError> {
     let text = match cmd {
         LobbyCommand::Help => LobbyCommand::descriptions().to_string(),
+        LobbyCommand::Players => {
+            let mut state_lock = bot_state.lock().unwrap();
+            match state_lock.lobby_manager.get_chats_lobby(msg.chat.id) {
+                Some(lobby) => {
+                    let host_id = lobby.host;
+                    let mut player_index = 0;
+                    lobby
+                        .players
+                        .iter()
+                        .map(|p| -> String {
+                            player_index += 1;
+                            if p.player_id == host_id {
+                                format!("{}. {} (host)", player_index, p.username)
+                            } else {
+                                format!("{}. {}", player_index, p.username)
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                }
+                None => format!("Internal error: player should be in a lobby but is not!"),
+            }
+        }
         LobbyCommand::Quit => {
             let mut state_lock = bot_state.lock().unwrap();
             state_lock
