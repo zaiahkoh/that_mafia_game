@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::lobby::*;
+use crate::lobby_manager::*;
 use rand::Rng;
 
 pub struct LocalLobbyManager {
@@ -29,9 +29,9 @@ impl LobbyManager for LocalLobbyManager {
         }
 
         let mut rng = rand::thread_rng();
-        let mut lobby_id = LobbyId(rng.gen_range(10_000..100_000));
+        let mut lobby_id = LobbyId(rng.gen_range(1_000..10_000));
         while let Some(_) = self.lobbies.get(&lobby_id) {
-            lobby_id = LobbyId(rng.gen_range(10_000..100_000));
+            lobby_id = LobbyId(rng.gen_range(1_000..10_000));
         }
 
         let lobby = Lobby {
@@ -55,7 +55,7 @@ impl LobbyManager for LocalLobbyManager {
                 lobby.players.push(chat_id);
                 self.player_map.insert(chat_id, lobby.lobby_id);
                 Ok(lobby)
-            },
+            }
             None => Err("Lobby does not exist"),
         }
     }
@@ -63,7 +63,6 @@ impl LobbyManager for LocalLobbyManager {
     fn quit_lobby(&mut self, chat_id: ChatId) -> Result<LobbyId, &'static str> {
         if let Some(lobby_id) = self.player_map.get(&chat_id) {
             if let Some(lobby) = self.lobbies.get_mut(&lobby_id) {
-
                 if lobby.players.len() == 1 {
                     self.lobbies.remove(lobby_id);
                 } else if lobby.host == chat_id {
