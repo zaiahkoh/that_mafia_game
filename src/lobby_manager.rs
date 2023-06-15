@@ -5,7 +5,7 @@ use teloxide::prelude::*;
 #[derive(Eq, Hash, PartialEq, Copy, Clone, derive_more::Display)]
 pub struct LobbyId(pub i32);
 
-pub struct Player{
+pub struct Player {
     pub player_id: ChatId,
     pub username: String,
 }

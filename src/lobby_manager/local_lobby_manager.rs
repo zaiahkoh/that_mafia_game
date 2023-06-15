@@ -20,7 +20,7 @@ impl LocalLobbyManager {
 impl LobbyManager for LocalLobbyManager {
     fn get_chats_lobby(&mut self, chat_id: teloxide::types::ChatId) -> Option<&Lobby> {
         let lobby_id = self.player_map.get(&chat_id)?;
-        return self.lobbies.get(lobby_id);
+        self.lobbies.get(lobby_id)
     }
 
     fn create_lobby(&mut self, player: Player) -> Result<&Lobby, &'static str> {
