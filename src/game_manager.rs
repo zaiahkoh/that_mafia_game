@@ -73,6 +73,31 @@ impl Game {
             Err("Internal error: night_action called when not GamePhase::Night")
         }
     }
+
+    pub fn count_night_pending_players(&self) -> Result<usize, &'static str> {
+        
+
+        if let GamePhase::Night { actions, .. } = &self.phase {
+            let idle_player_count = self
+                .players
+                .iter()
+                .filter(|p| match p.role {
+                    Role::Mafia => actions
+                        .iter()
+                        .find(|a| match a {
+                            Action::Kill { source, .. } if source == &p.player_id => true,
+                            _ => false,
+                        })
+                        .is_none(),
+                    Role::Civilian => false,
+                })
+                .count();
+
+            Ok(idle_player_count)
+        } else {
+            Err("Internal error: is_night_done called when not GamePhase::Night")
+        }
+    }
 }
 
 #[derive(Clone)]

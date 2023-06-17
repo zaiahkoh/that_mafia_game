@@ -1,18 +1,13 @@
-use std::{collections::btree_set::Iter, future::Future, rc::Rc, sync::Arc};
-
-use log::debug;
+use super::AsyncBotState;
+use crate::game_manager::{Game, GameManager, GamePhase};
+use std::sync::Arc;
 use teloxide::{
-    payloads::SendMessage,
+    dispatching::UpdateFilterExt,
     prelude::*,
-    requests::JsonRequest,
     types::{InlineKeyboardButton, InlineKeyboardMarkup},
-    RequestError, dispatching::UpdateFilterExt, dptree::di::Injectable,
+    RequestError,
 };
 use tokio::task::JoinSet;
-
-use crate::game_manager::{Game, GameManager, GamePhase, Player};
-
-use super::AsyncBotState;
 
 /*
 1. Check player is in a game
@@ -20,10 +15,7 @@ use super::AsyncBotState;
 3. Check the player's role
  */
 
-async fn gg_rip(
-    bot: Bot,
-    q: CallbackQuery
-) -> Result<(), RequestError> {
+async fn gg_rip(bot: Bot, q: CallbackQuery) -> Result<(), RequestError> {
     bot.send_message(q.from.id, "GG RIP").await?;
     Ok(())
 }
@@ -34,68 +26,27 @@ pub fn get_game_handler() -> Handler<
     Result<(), teloxide::RequestError>,
     teloxide::dispatching::DpHandlerDescription,
 > {
-    dptree::entry().branch(
-        Update::filter_callback_query().branch(
-            dptree::filter(|q: CallbackQuery, bot_state: AsyncBotState| {
-                matches!(
-                    bot_state
-                        .lock()
-                        .unwrap()
-                        .game_manager
-                        .get_player_game(q.from.id.into()),
-                    // Some(Game {
-                    //     phase: GamePhase::Night { .. },
-                    //     ..
-                    // })
-                    Some(_)
-                )
-            }
-        ).endpoint(handle_night)
-    )).branch(Update::filter_callback_query().endpoint(gg_rip))
-
-    // dptree::entry().branch(Update::filter_message())
-    // Update::filter_message()
-    //     .filter(|msg: Message, bot_state: AsyncBotState| {
-    //         bot_state
-    //             .lock()
-    //             .unwrap()
-    //             .game_manager
-    //             .get_player_game(msg.chat.id)
-    //             .is_some()
-    //     })
-    //     .branch(dptree::filter(|msg: Message, bot_state: AsyncBotState| {
-    //         matches!(
-    //             bot_state
-    //                 .lock()
-    //                 .unwrap()
-    //                 .game_manager
-    //                 .get_player_game(msg.chat.id),
-    //             Some(Game {
-    //                 phase: GamePhase::Night { .. },
-    //                 ..
-    //             })
-    //         )
-    //     }))
+    dptree::entry()
+        .branch(
+            Update::filter_callback_query().branch(
+                dptree::filter(|q: CallbackQuery, bot_state: AsyncBotState| {
+                    matches!(
+                        bot_state
+                            .lock()
+                            .unwrap()
+                            .game_manager
+                            .get_player_game(q.from.id.into()),
+                        Some(Game {
+                            phase: GamePhase::Night { .. },
+                            ..
+                        })
+                    )
+                })
+                .endpoint(handle_night),
+            ),
+        )
+        .branch(Update::filter_callback_query().endpoint(gg_rip))
 }
-
-// async fn game_handler(
-//     bot_state: AsyncBotState,
-//     bot: Bot,
-//     msg: Message,
-// ) -> Result<(), teloxide::RequestError> {
-//     let state_lock = bot_state.lock().unwrap();
-
-//     let game = state_lock
-//         .game_manager
-//         .get_player_game(msg.chat.id)
-//         .unwrap();
-//     match &game.phase {
-//         GamePhase::Night { .. } => handle_night(game, bot, msg),
-//         GamePhase::Trial { .. } => handle_voting(),
-//         GamePhase::Voting { .. } => handle_trial(),
-//     };
-//     !todo!();
-// }
 
 fn make_player_keyboard(game: &Game) -> InlineKeyboardMarkup {
     let mut keyboard = vec![];
@@ -119,7 +70,7 @@ pub async fn start_night(game: &Game, bot: Bot) -> Result<(), &'static str> {
         let id = player.player_id;
         let shared_game = Arc::new(game.clone());
         set.spawn(async move {
-            temp.send_message(id, "Hello everynyan again")
+            temp.send_message(id, "Good evening everynyan")
                 .reply_markup(make_player_keyboard(&shared_game))
                 .await
         });
@@ -142,8 +93,9 @@ pub async fn start_night(game: &Game, bot: Bot) -> Result<(), &'static str> {
 }
 
 async fn handle_night(
+    bot_state: AsyncBotState,
     bot: Bot,
-    q: CallbackQuery
+    q: CallbackQuery,
 ) -> Result<(), RequestError> {
     if let Some(target) = q.data {
         let text = format!("You chose: {target}");
@@ -151,24 +103,61 @@ async fn handle_night(
         bot.answer_callback_query(q.id).await?;
 
         if let Some(Message { id, chat, .. }) = q.message {
+            // let temp = bot.clone();
+            // tasks.spawn(async move {
+            //     temp.edit_message_text(chat.id, id, text).await
+            // });
             bot.edit_message_text(chat.id, id, text).await?;
         } else if let Some(id) = q.inline_message_id {
+            let temp = bot.clone();
+            // tasks.spawn(async move {
+            //     temp.edit_message_text_inline(id, text).await
+            // });
             bot.edit_message_text_inline(id, text).await?;
         }
     }
 
+    let mut chat_id = None;
+    let mut game: Option<Game> = None;
+    {
+        let state_lock = bot_state.lock().unwrap();
+        game = Some(
+            state_lock
+                .game_manager
+                .get_player_game(q.from.id.into())
+                .unwrap()
+                .clone(),
+        );
+        chat_id = Some(ChatId::from(q.from.id));
+    }
+
+    bot.send_message(
+        chat_id.unwrap(),
+        format!(
+            "Remaining players: {}",
+            game.unwrap().count_night_pending_players().unwrap()
+        ),
+    )
+    .await?;
+
     Ok(())
 }
 
-// fn handle_night(game: &Game, bot: Bot, msg: Message) -> Result<(), teloxide::RequestError> {
-//     if let Some(player) = game.get_player(msg.chat.id) {
-//         if !player.is_alive {
-//             return Ok(());
-//         }
-//     }
+async fn start_voting(game: &Game, bot: Bot) -> Result<(), &'static str> {
+    let mut set = JoinSet::new();
 
-//     Ok(())
-// }
+    for player in game.players.iter() {
+        let temp = bot.clone();
+        let id = player.player_id;
+        let shared_game = Arc::new(game.clone());
+        set.spawn(async move {
+            temp.send_message(id, "Good morning everynyan")
+                .reply_markup(make_player_keyboard(&shared_game))
+                .await
+        });
+    }
+    Ok(())
+}
 
 fn handle_voting() -> Result<(), teloxide::RequestError> {
     todo!()
