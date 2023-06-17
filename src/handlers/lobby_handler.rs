@@ -92,7 +92,7 @@ async fn lobby_handler(
 
     bot.send_message(msg.chat.id, text).await?;
     if let Some(game) = o_game {
-        start_night(&game, bot).await?;
+        start_night(&game, bot).await;
     }
 
     Ok(())

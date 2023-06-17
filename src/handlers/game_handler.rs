@@ -1,6 +1,14 @@
-use std::collections::btree_set::Iter;
+use std::{collections::btree_set::Iter, future::Future};
 
-use teloxide::{prelude::*, requests::JsonRequest, payloads::SendMessage};
+use log::debug;
+use teloxide::{
+    payloads::SendMessage,
+    prelude::*,
+    requests::JsonRequest,
+    types::{InlineKeyboardButton, InlineKeyboardMarkup},
+    RequestError,
+};
+use tokio::task::JoinSet;
 
 use crate::game_manager::{Game, GameManager, GamePhase, Player};
 
@@ -48,19 +56,48 @@ async fn game_handler(
     !todo!();
 }
 
-pub async fn start_night(game: &Game, bot: Bot) -> Result<(), teloxide::RequestError> {
+fn make_player_keyboard(game: &Game) -> InlineKeyboardMarkup {
+    let mut keyboard = vec![];
+
     for player in game.players.iter() {
-        bot.send_message(player.player_id, "Hello everynyan")
-            .await?;
+        let row = vec![InlineKeyboardButton::callback(
+            player.username.to_string(),
+            player.player_id.to_string(),
+        )];
+        keyboard.push(row);
+    }
+
+    InlineKeyboardMarkup::new(keyboard)
+}
+
+pub async fn start_night(game: &Game, bot: Bot) -> Result<(), &'static str> {
+    let mut set = JoinSet::new();
+
+    for player in game.players.iter() {
+        let temp = bot.clone();
+        let id = player.player_id;
+        let g = game.to_owned();
+        set.spawn(async move {
+            temp.send_message(id, "Hello everynyan again")
+                .reply_markup(make_player_keyboard(&g))
+                .await
+        });
+    }
+
+    while let Some(join_res) = set.join_next().await {
+        match join_res {
+            Ok(tele_res) => {
+                if let Err(_) = tele_res {
+                    return Err("Failed to send starting message");
+                }
+            }
+            Err(_) => {
+                return Err("Internal Error: join error");
+            }
+        }
     }
 
     Ok(())
-
-    // game.players
-    //     .iter()
-    //     .map(|p| bot.send_message(p.player_id, "Hello everynyan"))
-
-    // todo!()
 }
 
 fn handle_night(game: &Game, bot: Bot, msg: Message) -> Result<(), teloxide::RequestError> {

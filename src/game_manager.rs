@@ -8,6 +8,7 @@ pub enum Role {
     Civilian,
 }
 
+#[derive(Clone)]
 pub struct Player {
     pub player_id: ChatId,
     pub username: String,
@@ -19,11 +20,13 @@ pub struct Player {
 #[derive(Eq, Hash, PartialEq, Copy, Clone, derive_more::Display)]
 pub struct GameId(pub i32);
 
+#[derive(Clone)]
 pub struct Game {
     pub players: Vec<Player>,
     pub phase: GamePhase,
 }
 
+#[derive(Clone)]
 pub enum GamePhase {
     Night { count: i32, actions: Vec<Action> },
     Voting { count: i32 },
@@ -72,6 +75,7 @@ impl Game {
     }
 }
 
+#[derive(Clone)]
 pub enum Action {
     Kill { source: ChatId, target: ChatId },
 }
