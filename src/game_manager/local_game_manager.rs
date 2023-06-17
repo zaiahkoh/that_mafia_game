@@ -18,7 +18,7 @@ impl LocalGameManager {
 }
 
 impl GameManager for LocalGameManager {
-    fn get_player_game(&self, chat_id: teloxide::types::ChatId) -> Option<&Game> {
+    fn get_player_game(&self, chat_id: ChatId) -> Option<&Game> {
         let game_id = self.player_map.get(&chat_id)?;
         self.games.get(game_id)
     }
@@ -35,6 +35,11 @@ impl GameManager for LocalGameManager {
         }
 
         self.games.insert(game_id, game);
+    }
+
+    fn update_game(&mut self, game: Game, chat_id: ChatId) {
+        let game_id = self.player_map.get(&chat_id);
+        self.games.insert(*game_id.unwrap(), game);
     }
 
     fn quit_game(&mut self, chat_id: ChatId) -> Result<&Game, &'static str> {

@@ -43,7 +43,7 @@ impl Game {
                     player_id: p.player_id,
                     username: p.username.clone(),
                     is_alive: true,
-                    role: Role::Civilian,
+                    role: Role::Mafia,
                     is_connected: true,
                 })
                 .collect::<Vec<_>>(),
@@ -66,8 +66,9 @@ impl Game {
             .into()
     }
 
-    pub fn night_action(&self, action: Action) -> Result<(), &'static str> {
-        if let GamePhase::Night { actions, .. } = &self.phase {
+    pub fn night_action(&mut self, action: Action) -> Result<(), &'static str> {
+        if let GamePhase::Night { actions, .. } = &mut self.phase {
+            actions.push(action);
             Ok(())
         } else {
             Err("Internal error: night_action called when not GamePhase::Night")
@@ -75,8 +76,6 @@ impl Game {
     }
 
     pub fn count_night_pending_players(&self) -> Result<usize, &'static str> {
-        
-
         if let GamePhase::Night { actions, .. } = &self.phase {
             let idle_player_count = self
                 .players
@@ -113,6 +112,8 @@ pub trait GameManager {
 
     // Adds game to the map
     fn add_game(&mut self, game: Game);
+
+    fn update_game(&mut self, game: Game, chat_id: ChatId);
 
     // If the host quits, then a remaining player should be randomly chosen to be the new host
     fn quit_game(&mut self, chat_id: ChatId) -> Result<&Game, &'static str>;

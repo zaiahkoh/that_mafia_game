@@ -1,5 +1,5 @@
 use super::AsyncBotState;
-use crate::game_manager::{Game, GameManager, GamePhase};
+use crate::game_manager::{Action, Game, GameManager, GamePhase, Role};
 use std::sync::Arc;
 use teloxide::{
     dispatching::UpdateFilterExt,
@@ -97,48 +97,73 @@ async fn handle_night(
     bot: Bot,
     q: CallbackQuery,
 ) -> Result<(), RequestError> {
-    if let Some(target) = q.data {
+    if let Some(target) = q.data.as_ref() {
         let text = format!("You chose: {target}");
 
         bot.answer_callback_query(q.id).await?;
 
         if let Some(Message { id, chat, .. }) = q.message {
-            // let temp = bot.clone();
-            // tasks.spawn(async move {
-            //     temp.edit_message_text(chat.id, id, text).await
-            // });
             bot.edit_message_text(chat.id, id, text).await?;
         } else if let Some(id) = q.inline_message_id {
-            let temp = bot.clone();
-            // tasks.spawn(async move {
-            //     temp.edit_message_text_inline(id, text).await
-            // });
             bot.edit_message_text_inline(id, text).await?;
         }
     }
 
-    let mut chat_id = None;
-    let mut game: Option<Game> = None;
+    let chat_id = ChatId::from(q.from.id);
+    let mut opt = None;
     {
-        let state_lock = bot_state.lock().unwrap();
-        game = Some(
-            state_lock
-                .game_manager
-                .get_player_game(q.from.id.into())
-                .unwrap()
-                .clone(),
-        );
-        chat_id = Some(ChatId::from(q.from.id));
+        let mut state_lock = bot_state.lock().unwrap();
+        let mut game = state_lock
+            .game_manager
+            .get_player_game(q.from.id.into())
+            .unwrap()
+            .clone();
+
+        if matches!(game.get_role(chat_id), Some(Role::Mafia)) {
+            assert!(matches!(
+                game.night_action(Action::Kill {
+                    source: chat_id,
+                    target: ChatId(q.data.as_ref().unwrap().parse::<i64>().unwrap()),
+                }),
+                Ok(())
+            ));
+        }
+
+        state_lock.game_manager.update_game(game.clone(), chat_id);
+
+        match &game.phase {
+            GamePhase::Night {actions, .. } => {
+                assert!(actions.len() > 0);
+            }
+            _ => {
+                panic!()
+            }
+        }
+
+        opt = Some(game.clone());
+    }
+
+    let game = opt.as_mut().unwrap();
+
+    match &game.phase {
+        GamePhase::Night {actions, .. } => {
+            assert!(actions.len() > 0);
+        }
+        _ => {
+            panic!()
+        }
     }
 
     bot.send_message(
-        chat_id.unwrap(),
+        chat_id,
         format!(
             "Remaining players: {}",
-            game.unwrap().count_night_pending_players().unwrap()
+            game.count_night_pending_players().unwrap()
         ),
     )
     .await?;
+
+    start_voting(game, bot).await;
 
     Ok(())
 }
@@ -156,6 +181,20 @@ async fn start_voting(game: &Game, bot: Bot) -> Result<(), &'static str> {
                 .await
         });
     }
+
+    while let Some(join_res) = set.join_next().await {
+        match join_res {
+            Ok(tele_res) => {
+                if let Err(_) = tele_res {
+                    return Err("Failed to send starting message");
+                }
+            }
+            Err(_) => {
+                return Err("Internal Error: join error");
+            }
+        }
+    }
+
     Ok(())
 }
 
