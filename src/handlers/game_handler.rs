@@ -70,7 +70,8 @@ pub async fn start_night(game: &Game, bot: Bot) -> Result<(), &'static str> {
         let id = player.player_id;
         let shared_game = Arc::new(game.clone());
         set.spawn(async move {
-            temp.send_message(id, "Good evening everynyan")
+            let role = shared_game.get_role(id).unwrap();
+            temp.send_message(id, format!("Good evening everynyan. You are a {:?}", role))
                 .reply_markup(make_player_keyboard(&shared_game))
                 .await
         });

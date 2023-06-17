@@ -1,8 +1,9 @@
+use rand::{seq::SliceRandom, thread_rng};
 use teloxide::types::ChatId;
 
 use crate::lobby_manager::Lobby;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum Role {
     Mafia,
     Civilian,
@@ -35,15 +36,21 @@ pub enum GamePhase {
 
 impl Game {
     pub fn from_lobby(lobby: &Lobby) -> Game {
+        let player_count = lobby.players.len();
+        let mut roles = vec![Role::Civilian; player_count];
+        roles[0] = Role::Mafia;
+        roles.shuffle(&mut thread_rng());
+
         Game {
             players: lobby
                 .players
                 .iter()
-                .map(|p| Player {
+                .zip(roles)
+                .map(|(p, r)| Player {
                     player_id: p.player_id,
                     username: p.username.clone(),
                     is_alive: true,
-                    role: Role::Mafia,
+                    role: r,
                     is_connected: true,
                 })
                 .collect::<Vec<_>>(),
