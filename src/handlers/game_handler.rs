@@ -1,4 +1,4 @@
-use std::{collections::btree_set::Iter, future::Future};
+use std::{collections::btree_set::Iter, future::Future, rc::Rc, sync::Arc};
 
 use log::debug;
 use teloxide::{
@@ -76,10 +76,10 @@ pub async fn start_night(game: &Game, bot: Bot) -> Result<(), &'static str> {
     for player in game.players.iter() {
         let temp = bot.clone();
         let id = player.player_id;
-        let g = game.to_owned();
+        let shared_game = Arc::new(game.clone());
         set.spawn(async move {
             temp.send_message(id, "Hello everynyan again")
-                .reply_markup(make_player_keyboard(&g))
+                .reply_markup(make_player_keyboard(&shared_game))
                 .await
         });
     }
