@@ -59,6 +59,9 @@ fn make_player_keyboard(game: &Game) -> InlineKeyboardMarkup {
         keyboard.push(row);
     }
 
+    let none_option = vec![InlineKeyboardButton::callback("No target", "-1")];
+    keyboard.push(none_option);
+
     InlineKeyboardMarkup::new(keyboard)
 }
 
@@ -72,6 +75,34 @@ pub async fn start_night(game: &Game, bot: Bot) -> Result<(), &'static str> {
         set.spawn(async move {
             let role = shared_game.get_role(id).unwrap();
             temp.send_message(id, format!("Good evening everynyan. You are a {:?}", role))
+                .await
+        });
+    }
+
+    while let Some(join_res) = set.join_next().await {
+        match join_res {
+            Ok(tele_res) => {
+                if let Err(_) = tele_res {
+                    return Err("Failed to send starting message");
+                }
+            }
+            Err(_) => {
+                return Err("Internal Error: join error");
+            }
+        }
+    }
+
+    for player in game
+        .players
+        .iter()
+        .filter(|p| matches!(p.role, Role::Mafia))
+    {
+        let temp = bot.clone();
+        let id = player.player_id;
+        let shared_game = Arc::new(game.clone());
+        set.spawn(async move {
+            let role = shared_game.get_role(id).unwrap();
+            temp.send_message(id, "Pick a target: ")
                 .reply_markup(make_player_keyboard(&shared_game))
                 .await
         });
@@ -120,40 +151,17 @@ async fn handle_night(
             .unwrap()
             .clone();
 
-        if matches!(game.get_role(chat_id), Some(Role::Mafia)) {
-            assert!(matches!(
-                game.night_action(Action::Kill {
-                    source: chat_id,
-                    target: ChatId(q.data.as_ref().unwrap().parse::<i64>().unwrap()),
-                }),
-                Ok(())
-            ));
-        }
+        game.night_action(Action::Kill {
+            source: chat_id,
+            target: ChatId(q.data.as_ref().unwrap().parse::<i64>().unwrap()),
+        });
 
         state_lock.game_manager.update_game(game.clone(), chat_id);
-
-        match &game.phase {
-            GamePhase::Night {actions, .. } => {
-                assert!(actions.len() > 0);
-            }
-            _ => {
-                panic!()
-            }
-        }
 
         opt = Some(game.clone());
     }
 
     let game = opt.as_mut().unwrap();
-
-    match &game.phase {
-        GamePhase::Night {actions, .. } => {
-            assert!(actions.len() > 0);
-        }
-        _ => {
-            panic!()
-        }
-    }
 
     bot.send_message(
         chat_id,
