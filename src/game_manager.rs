@@ -86,6 +86,9 @@ pub trait GameManager {
     // Gets the instantaneous lobby, if present, of a chat user.
     fn get_player_game(&self, chat_id: ChatId) -> Option<&Game>;
 
+    // Adds game to the map
+    fn add_game(&mut self, game: Game);
+
     // If the host quits, then a remaining player should be randomly chosen to be the new host
     fn quit_game(&mut self, chat_id: ChatId) -> Result<&Game, &'static str>;
 }

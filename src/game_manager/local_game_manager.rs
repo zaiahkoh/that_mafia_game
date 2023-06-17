@@ -1,4 +1,4 @@
-use super::{Game, GameId, GameManager, Player, Role, GamePhase};
+use super::{Game, GameId, GameManager, GamePhase, Player, Role};
 use rand::Rng;
 use std::collections::HashMap;
 use teloxide::types::ChatId;
@@ -21,6 +21,20 @@ impl GameManager for LocalGameManager {
     fn get_player_game(&self, chat_id: teloxide::types::ChatId) -> Option<&Game> {
         let game_id = self.player_map.get(&chat_id)?;
         self.games.get(game_id)
+    }
+
+    fn add_game(&mut self, game: Game) {
+        let mut rng = rand::thread_rng();
+        let mut game_id = GameId(rng.gen_range(1_000..10_000));
+        while let Some(_) = self.games.get(&game_id) {
+            game_id = GameId(rng.gen_range(1_000..10_000));
+        }
+
+        for p in game.players.iter() {
+            self.player_map.insert(p.player_id, game_id);   
+        }
+
+        self.games.insert(game_id, game);
     }
 
     fn quit_game(&mut self, chat_id: ChatId) -> Result<&Game, &'static str> {

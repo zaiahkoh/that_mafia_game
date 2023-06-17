@@ -9,7 +9,7 @@ pub fn get_main_menu_handler() -> Handler<
     Result<(), teloxide::RequestError>,
     teloxide::dispatching::DpHandlerDescription,
 > {
-    dptree::entry()
+    Update::filter_message()
         .filter(|msg: Message, bot_state: AsyncBotState| {
             bot_state
                 .lock()
@@ -71,6 +71,8 @@ async fn main_menu_handler(
             }
         }
     };
+
+    assert!(ChatId::from(msg.from().unwrap().id) == msg.chat.id);
 
     bot.send_message(msg.chat.id, text).await?;
 

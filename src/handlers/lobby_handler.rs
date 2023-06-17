@@ -1,7 +1,7 @@
 use teloxide::{prelude::*, utils::command::BotCommands};
 
-use super::{AsyncBotState, game_handler::start_night};
-use crate::{lobby_manager::LobbyManager, game_manager::Game};
+use super::{game_handler::start_night, AsyncBotState};
+use crate::{game_manager::{Game, GameManager}, lobby_manager::LobbyManager};
 
 pub fn get_lobby_handler() -> Handler<
     'static,
@@ -9,16 +9,17 @@ pub fn get_lobby_handler() -> Handler<
     Result<(), teloxide::RequestError>,
     teloxide::dispatching::DpHandlerDescription,
 > {
-    dptree::filter(|msg: Message, bot_state: AsyncBotState| {
-        bot_state
-            .lock()
-            .unwrap()
-            .lobby_manager
-            .get_chats_lobby(msg.chat.id)
-            .is_some()
-    })
-    .filter_command::<LobbyCommand>()
-    .endpoint(lobby_handler)
+    Update::filter_message()
+        .filter(|msg: Message, bot_state: AsyncBotState| {
+            bot_state
+                .lock()
+                .unwrap()
+                .lobby_manager
+                .get_chats_lobby(msg.chat.id)
+                .is_some()
+        })
+        .filter_command::<LobbyCommand>()
+        .endpoint(lobby_handler)
 }
 
 #[derive(BotCommands, Clone)]
@@ -78,12 +79,14 @@ async fn lobby_handler(
             }
         }
         LobbyCommand::Start => {
-            // let mut state_lock = bot_state.lock().unwrap();
-            let lobby_manager = &mut bot_state.lock().unwrap().lobby_manager;
+            let mut state_lock = bot_state.lock().unwrap();
+            let lobby_manager = &mut state_lock.lobby_manager;
+            // let lobby_manager = &mut bot_state.lock().unwrap().lobby_manager;
             if let Some(lobby) = lobby_manager.get_chats_lobby(msg.chat.id) {
                 let game = Game::from_lobby(lobby);
                 lobby_manager.close_lobby(lobby.lobby_id);
-                o_game = Some(game);
+                o_game = Some(game.clone());
+                state_lock.game_manager.add_game(game);
             }
 
             format!("Started lobby")

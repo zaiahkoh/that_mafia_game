@@ -16,7 +16,7 @@ pub async fn start_mafia_bot() -> Result<(), Box<dyn Error>> {
 
     let bot_state = new_async_bot_state();
 
-    let handler = Update::filter_message()
+    let handler = dptree::entry()
         .branch(get_game_handler())
         .branch(get_lobby_handler())
         .branch(get_main_menu_handler());
