@@ -1,6 +1,7 @@
 use std::error::Error;
 use teloxide::prelude::*;
 
+use crate::handlers::game_handler::get_game_handler;
 use crate::handlers::lobby_handler::get_lobby_handler;
 use crate::handlers::main_menu_handler::get_main_menu_handler;
 use crate::handlers::new_async_bot_state;
@@ -16,6 +17,7 @@ pub async fn start_mafia_bot() -> Result<(), Box<dyn Error>> {
     let bot_state = new_async_bot_state();
 
     let handler = Update::filter_message()
+        .branch(get_game_handler())
         .branch(get_lobby_handler())
         .branch(get_main_menu_handler());
 

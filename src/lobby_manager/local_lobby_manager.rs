@@ -18,7 +18,7 @@ impl LocalLobbyManager {
 }
 
 impl LobbyManager for LocalLobbyManager {
-    fn get_chats_lobby(&mut self, chat_id: teloxide::types::ChatId) -> Option<&Lobby> {
+    fn get_chats_lobby(&self, chat_id: teloxide::types::ChatId) -> Option<&Lobby> {
         let lobby_id = self.player_map.get(&chat_id)?;
         self.lobbies.get(lobby_id)
     }
@@ -62,6 +62,16 @@ impl LobbyManager for LocalLobbyManager {
             }
             None => Err("Lobby does not exist"),
         }
+    }
+
+    fn close_lobby(&mut self, lobby_id: LobbyId) -> Result<(), &'static str> {
+        let players = self.lobbies.get(&lobby_id).unwrap().players.iter();
+        for p in players {
+            self.player_map.remove(&p.player_id);
+        };
+        self.lobbies.remove(&lobby_id);
+
+        Ok(())
     }
 
     fn quit_lobby(&mut self, chat_id: ChatId) -> Result<LobbyId, &'static str> {

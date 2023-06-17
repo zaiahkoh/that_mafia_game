@@ -19,11 +19,13 @@ pub struct Lobby {
 
 pub trait LobbyManager {
     // Gets the instantaneous lobby, if present, of a chat user.
-    fn get_chats_lobby(&mut self, chat_id: ChatId) -> Option<&Lobby>;
+    fn get_chats_lobby(&self, chat_id: ChatId) -> Option<&Lobby>;
 
     fn create_lobby(&mut self, player: Player) -> Result<&Lobby, &'static str>;
 
     fn join_lobby(&mut self, lobby_id: LobbyId, player: Player) -> Result<&Lobby, &'static str>;
+
+    fn close_lobby(&mut self, lobby_id: LobbyId) -> Result<(), &'static str>;
 
     // If the host quits, then a remaining player should be randomly chosen to be the new host
     fn quit_lobby(&mut self, chat_id: ChatId) -> Result<LobbyId, &'static str>;
