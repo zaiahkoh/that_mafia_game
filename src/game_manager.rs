@@ -1,5 +1,7 @@
+use std::collections::HashMap;
+
 use rand::{seq::SliceRandom, thread_rng};
-use teloxide::types::ChatId;
+use teloxide::types::{ChatId, Poll};
 
 use crate::lobby_manager::Lobby;
 
@@ -25,13 +27,23 @@ pub struct GameId(pub i32);
 pub struct Game {
     pub players: Vec<Player>,
     pub phase: GamePhase,
+    pub previous: Option<Box<Game>>,
 }
 
 #[derive(Clone)]
 pub enum GamePhase {
-    Night { count: i32, actions: Vec<Action> },
-    Voting { count: i32 },
-    Trial { count: i32 },
+    Night {
+        count: i32,
+        actions: Vec<Action>,
+    },
+    Voting {
+        count: i32,
+        votes: HashMap<ChatId, i32>,
+        prev_votes: Option<HashMap<ChatId, i32>>,
+    },
+    Trial {
+        count: i32,
+    },
 }
 
 impl Game {
@@ -58,6 +70,27 @@ impl Game {
                 count: 0,
                 actions: vec![],
             },
+            previous: None,
+        }
+    }
+
+    pub fn get_winner(&self) -> Option<String> {
+        let mafia_count = self
+            .players
+            .iter()
+            .filter(|p| matches!(p.role, Role::Mafia))
+            .count();
+        let civilian_count = self
+            .players
+            .iter()
+            .filter(|p| !matches!(p.role, Role::Mafia))
+            .count();
+        if mafia_count == 0 {
+            Some(String::from("Civilians"))
+        } else if mafia_count >= civilian_count {
+            Some(String::from("Mafia"))
+        } else {
+            None
         }
     }
 
@@ -73,7 +106,7 @@ impl Game {
             .into()
     }
 
-    pub fn night_action(&mut self, action: Action) -> Result<(), &'static str> {
+    pub fn push_night_action(&mut self, action: Action) -> Result<(), &'static str> {
         if let GamePhase::Night { actions, .. } = &mut self.phase {
             actions.push(action);
             Ok(())
@@ -102,6 +135,71 @@ impl Game {
             Ok(idle_player_count)
         } else {
             Err("Internal error: is_night_done called when not GamePhase::Night")
+        }
+    }
+
+    pub fn end_night(&mut self) -> Result<(), &'static str> {
+        if let GamePhase::Night { actions, count } = &self.phase {
+            self.previous = Some(Box::new(self.clone()));
+            // Resolve actions
+            for a in actions {
+                match a {
+                    Action::Kill { source, target } => {
+                        self.players
+                            .iter_mut()
+                            .find(|p| p.player_id == *target)
+                            .unwrap()
+                            .is_alive = false;
+                    }
+                }
+            }
+
+            self.phase = GamePhase::Voting {
+                count: *count,
+                votes: HashMap::new(),
+                prev_votes: None,
+            };
+            Ok(())
+        } else {
+            Err("Internal error: is_night_done called when not GamePhase::Night")
+        }
+    }
+
+    pub fn get_transition_message(&self) -> String {
+        match &self.phase {
+            GamePhase::Night { count, actions } => {
+                if let Some(Game {
+                    players,
+                    phase: GamePhase::Trial { .. },
+                    ..
+                }) = self.previous.as_deref()
+                {
+                    "Not implemented yet".to_string()
+                } else {
+                    panic!("get_transition_message: game.previous.phase does not match")
+                }
+            }
+            GamePhase::Voting { count, .. } => {
+                if let Some(Game {
+                    players,
+                    phase: GamePhase::Night { .. },
+                    ..
+                }) = self.previous.as_deref()
+                {
+                    let killed_player_names = players
+                        .iter()
+                        .filter(|p| p.is_alive && !self.get_player(p.player_id).unwrap().is_alive)
+                        .map(|p| p.username.clone())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+
+                    format!("{killed_player_names} were killed last night!")
+                } else {
+                    panic!("get_transition_message: game.previous.phase does not match")
+                }
+            }
+
+            GamePhase::Trial { count } => "Not implemented yet".to_string(),
         }
     }
 }

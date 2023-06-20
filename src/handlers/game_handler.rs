@@ -4,7 +4,7 @@ use std::sync::Arc;
 use teloxide::{
     dispatching::UpdateFilterExt,
     prelude::*,
-    types::{InlineKeyboardButton, InlineKeyboardMarkup},
+    types::{InlineKeyboardButton, InlineKeyboardMarkup, Poll},
     RequestError,
 };
 use tokio::task::JoinSet;
@@ -46,6 +46,33 @@ pub fn get_game_handler() -> Handler<
             ),
         )
         .branch(Update::filter_callback_query().endpoint(gg_rip))
+        .branch(
+            Update::filter_poll_answer()
+                .filter(|bot_state: AsyncBotState, poll_answer: PollAnswer| {
+                    matches!(
+                        bot_state
+                            .lock()
+                            .unwrap()
+                            .game_manager
+                            .get_player_game(poll_answer.user.id.into()),
+                        Some(Game {
+                            phase: GamePhase::Voting { .. },
+                            ..
+                        })
+                    )
+                })
+                .endpoint(test_poll_handler),
+        )
+}
+
+async fn test_poll_handler(
+    bot_state: AsyncBotState,
+    bot: Bot,
+    poll_answer: PollAnswer,
+) -> Result<(), RequestError> {
+    bot.send_message(poll_answer.user.id, "whatsapp").await?;
+
+    Ok(())
 }
 
 fn make_player_keyboard(game: &Game) -> InlineKeyboardMarkup {
@@ -144,6 +171,7 @@ async fn handle_night(
     let chat_id = ChatId::from(q.from.id);
     let mut opt = None;
     {
+        // Wrap code in braces to release lock on bot_state
         let mut state_lock = bot_state.lock().unwrap();
         let mut game = state_lock
             .game_manager
@@ -151,44 +179,68 @@ async fn handle_night(
             .unwrap()
             .clone();
 
-        game.night_action(Action::Kill {
+        game.push_night_action(Action::Kill {
             source: chat_id,
             target: ChatId(q.data.as_ref().unwrap().parse::<i64>().unwrap()),
-        });
+        })
+        .unwrap();
 
         state_lock.game_manager.update_game(game.clone(), chat_id);
 
         opt = Some(game.clone());
     }
 
-    let game = opt.as_mut().unwrap();
+    let game = opt.as_ref().unwrap();
+    let pending_player_count = game.count_night_pending_players().unwrap();
 
     bot.send_message(
         chat_id,
-        format!(
-            "Remaining players: {}",
-            game.count_night_pending_players().unwrap()
-        ),
+        format!("Remaining players: {pending_player_count}"),
     )
     .await?;
 
-    start_voting(game, bot).await;
-
+    if pending_player_count == 0 {
+        let mut temp = None;
+        {
+            let mut state_lock = bot_state.lock().unwrap();
+            let mut game = state_lock
+                .game_manager
+                .get_player_game(q.from.id.into())
+                .unwrap()
+                .clone();
+            game.end_night();
+            state_lock.game_manager.update_game(game.clone(), chat_id);
+            temp = Some(game);
+        }
+        start_voting(temp.as_ref().unwrap(), bot).await;
+    }
     Ok(())
 }
 
 async fn start_voting(game: &Game, bot: Bot) -> Result<(), &'static str> {
     let mut set = JoinSet::new();
 
+    let shared_bot = Arc::new(bot.clone());
     for player in game.players.iter() {
         let temp = bot.clone();
         let id = player.player_id;
         let shared_game = Arc::new(game.clone());
+
         set.spawn(async move {
-            temp.send_message(id, "Good morning everynyan")
-                .reply_markup(make_player_keyboard(&shared_game))
+            temp.send_message(id, shared_game.get_transition_message())
+                // .reply_markup(make_player_keyboard(&shared_game))
                 .await
+            // temp.forward_message(id, id, asdf).await
         });
+
+        let colors: Vec<String> = vec!["Red".to_string(), "Blue".to_string()];
+        let asdf = shared_bot
+            .send_poll(id, "What is your favourite color", colors.into_iter())
+            .allows_multiple_answers(true)
+            .is_anonymous(false)
+            .await
+            .unwrap()
+            .id;
     }
 
     while let Some(join_res) = set.join_next().await {
@@ -207,8 +259,22 @@ async fn start_voting(game: &Game, bot: Bot) -> Result<(), &'static str> {
     Ok(())
 }
 
-fn handle_voting() -> Result<(), teloxide::RequestError> {
-    todo!()
+/*
+1. If skip, skip
+2. If PollAnswer, add to results and close poll
+3. Check for finalised answer.
+    a. If tied and same as previous, skip to night
+    b. If tied and different, re-vote
+    c. If outcome, then go to trial
+ */
+
+fn handle_vote(
+    bot_state: AsyncBotState,
+    bot: Bot,
+    poll_answer: PollAnswer,
+) -> Result<(), teloxide::RequestError> {
+
+    Ok(())
 }
 
 fn handle_trial() -> Result<(), teloxide::RequestError> {
