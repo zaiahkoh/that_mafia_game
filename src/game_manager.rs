@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use rand::{seq::SliceRandom, thread_rng};
-use teloxide::types::{ChatId, Poll};
+use teloxide::types::{ChatId, Poll, MessageId};
 
 use crate::lobby_manager::Lobby;
 
@@ -38,6 +38,7 @@ pub enum GamePhase {
     },
     Voting {
         count: i32,
+        poll_id_map: HashMap<ChatId, MessageId>,
         votes: HashMap<ChatId, i32>,
         prev_votes: Option<HashMap<ChatId, i32>>,
     },
@@ -158,6 +159,7 @@ impl Game {
                 count: *count,
                 votes: HashMap::new(),
                 prev_votes: None,
+                poll_id_map: HashMap::new(),
             };
             Ok(())
         } else {

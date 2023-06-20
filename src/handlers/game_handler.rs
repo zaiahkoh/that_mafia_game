@@ -1,6 +1,6 @@
 use super::AsyncBotState;
 use crate::game_manager::{Action, Game, GameManager, GamePhase, Role};
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use teloxide::{
     dispatching::UpdateFilterExt,
     prelude::*,
@@ -61,7 +61,7 @@ pub fn get_game_handler() -> Handler<
                         })
                     )
                 })
-                .endpoint(test_poll_handler),
+                .endpoint(handle_vote),
         )
 }
 
@@ -212,49 +212,72 @@ async fn handle_night(
             state_lock.game_manager.update_game(game.clone(), chat_id);
             temp = Some(game);
         }
-        start_voting(temp.as_ref().unwrap(), bot).await;
+        start_voting(temp.as_ref().unwrap(), bot, bot_state).await;
     }
     Ok(())
 }
 
-async fn start_voting(game: &Game, bot: Bot) -> Result<(), &'static str> {
+async fn start_voting(game: &Game, bot: Bot, bot_state: AsyncBotState) -> Result<(), &'static str> {
     let mut set = JoinSet::new();
 
     let shared_bot = Arc::new(bot.clone());
+
     for player in game.players.iter() {
         let temp = bot.clone();
         let id = player.player_id;
         let shared_game = Arc::new(game.clone());
+        let colors: Vec<String> = vec!["Red".to_string(), "Blue".to_string()];
 
         set.spawn(async move {
             temp.send_message(id, shared_game.get_transition_message())
-                // .reply_markup(make_player_keyboard(&shared_game))
-                .await
-            // temp.forward_message(id, id, asdf).await
+                .await;
+            (
+                id,
+                temp.send_poll(
+                    id,
+                    format!("What is your favourite color"),
+                    colors.into_iter(),
+                )
+                .allows_multiple_answers(true)
+                .is_anonymous(false)
+                .await,
+            )
         });
-
-        let colors: Vec<String> = vec!["Red".to_string(), "Blue".to_string()];
-        let asdf = shared_bot
-            .send_poll(id, "What is your favourite color", colors.into_iter())
-            .allows_multiple_answers(true)
-            .is_anonymous(false)
-            .await
-            .unwrap()
-            .id;
     }
 
+    let new_game = game.clone();
+    let chat_id = game.players.first().unwrap().player_id;
+    bot_state
+        .lock()
+        .unwrap()
+        .game_manager
+        .update_game(game.clone(), chat_id);
+
+    let mut poll_map = HashMap::new();
     while let Some(join_res) = set.join_next().await {
         match join_res {
-            Ok(tele_res) => {
-                if let Err(_) = tele_res {
+            Ok(tele_res) => match tele_res {
+                (id, Ok(message)) => {
+                    poll_map.insert(id, message.id);
+                }
+                (_, Err(_)) => {
                     return Err("Failed to send starting message");
                 }
-            }
+            },
             Err(_) => {
                 return Err("Internal Error: join error");
             }
-        }
+        };
     }
+
+    let new_game = game.clone();
+    if let GamePhase::Voting { poll_id_map, .. } = &mut new_game.phase {
+        poll_id_map = *poll_map;
+    } else {
+        panic!("game was not in voting phase");
+    }
+    let chat_id = game.players.first().unwrap().player_id;
+    bot_state.lock().unwrap().game_manager.update_game(new_game, chat_id);
 
     Ok(())
 }
@@ -268,12 +291,14 @@ async fn start_voting(game: &Game, bot: Bot) -> Result<(), &'static str> {
     c. If outcome, then go to trial
  */
 
-fn handle_vote(
+async fn handle_vote(
     bot_state: AsyncBotState,
     bot: Bot,
     poll_answer: PollAnswer,
+    // poll: Poll,
 ) -> Result<(), teloxide::RequestError> {
-
+    let poll_id = poll_answer.poll_id;
+    bot.send_message(poll_answer.user.id, poll_id).await?;
     Ok(())
 }
 
