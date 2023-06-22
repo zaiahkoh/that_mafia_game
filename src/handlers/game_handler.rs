@@ -206,6 +206,7 @@ async fn handle_night(
             let mut game = state_lock
                 .game_manager
                 .get_player_game(q.from.id.into())
+                .as_mut()
                 .unwrap()
                 .clone();
             game.end_night();
@@ -217,67 +218,72 @@ async fn handle_night(
     Ok(())
 }
 
+// 1. Send out poll
+// 2. Save message_ids
 async fn start_voting(game: &Game, bot: Bot, bot_state: AsyncBotState) -> Result<(), &'static str> {
     let mut set = JoinSet::new();
-
-    let shared_bot = Arc::new(bot.clone());
+    let mut player_text = game
+        .get_alive_players()
+        .map(|p| p.player_id.0.to_string())
+        .collect::<Vec<_>>();
+    player_text.push("Nobody".to_owned());
+    player_text.push("Abstain".to_string());
 
     for player in game.players.iter() {
         let temp = bot.clone();
-        let id = player.player_id;
-        let shared_game = Arc::new(game.clone());
-        let colors: Vec<String> = vec!["Red".to_string(), "Blue".to_string()];
+        let chat_id = player.player_id;
+        let transition_message = game.get_transition_message();
+        let option_text = player_text.clone();
 
         set.spawn(async move {
-            temp.send_message(id, shared_game.get_transition_message())
-                .await;
-            (
-                id,
-                temp.send_poll(
-                    id,
+            temp.send_message(chat_id, transition_message).await;
+
+            let poll_res = temp
+                .send_poll(
+                    chat_id,
                     format!("What is your favourite color"),
-                    colors.into_iter(),
+                    option_text,
                 )
                 .allows_multiple_answers(true)
                 .is_anonymous(false)
-                .await,
-            )
+                .await;
+            (chat_id, poll_res)
         });
     }
 
-    let new_game = game.clone();
+    let mut new_game = game.clone();
+
+    if let GamePhase::Voting {
+        poll_id_map,
+        vote_options: poll_options,
+        ..
+    } = &mut new_game.phase
+    {
+        while let Some(join_res) = set.join_next().await {
+            match join_res {
+                Ok((id, tele_res)) => match tele_res {
+                    Ok(message) => {
+                        poll_id_map.insert(id, message.id);
+                    }
+                    Err(err) => {
+                        panic!("{err}");
+                    }
+                },
+                Err(err) => {
+                    panic!("{err}");
+                }
+            };
+        }
+    } else {
+        panic!("game was not in voting phase");
+    }
+
     let chat_id = game.players.first().unwrap().player_id;
     bot_state
         .lock()
         .unwrap()
         .game_manager
-        .update_game(game.clone(), chat_id);
-
-    let mut poll_map = HashMap::new();
-    while let Some(join_res) = set.join_next().await {
-        match join_res {
-            Ok(tele_res) => match tele_res {
-                (id, Ok(message)) => {
-                    poll_map.insert(id, message.id);
-                }
-                (_, Err(_)) => {
-                    return Err("Failed to send starting message");
-                }
-            },
-            Err(_) => {
-                return Err("Internal Error: join error");
-            }
-        };
-    }
-
-    let new_game = game.clone();
-    if let GamePhase::Voting { poll_id_map, .. } = &mut new_game.phase {
-        poll_id_map = *poll_map;
-    } else {
-        panic!("game was not in voting phase");
-    }
-    let chat_id = game.players.first().unwrap().player_id;
-    bot_state.lock().unwrap().game_manager.update_game(new_game, chat_id);
+        .update_game(new_game, chat_id);
 
     Ok(())
 }
@@ -295,10 +301,50 @@ async fn handle_vote(
     bot_state: AsyncBotState,
     bot: Bot,
     poll_answer: PollAnswer,
-    // poll: Poll,
 ) -> Result<(), teloxide::RequestError> {
+    let user_id = poll_answer.user.id;
+
+    let mut game_opt = None;
+    let mut selected = Vec::<i32>::new();
+    let mut message_id_opt = None;
+    {
+        let state_lock = &mut bot_state.lock().unwrap();
+        let game_manager = &mut state_lock.game_manager;
+        game_opt = game_manager.get_player_game(poll_answer.user.id.into());
+
+        if let Some(Game {
+            phase:
+                GamePhase::Voting {
+                    poll_id_map,
+                    votes,
+                    vote_options,
+                    ..
+                },
+            ..
+        }) = game_opt.as_mut()
+        {
+            for choice in poll_answer.option_ids {
+                selected.push(choice);
+
+                let target_id = vote_options[choice as usize].0;
+                if votes.get(&target_id).is_none() {
+                    votes.insert(target_id, 0);
+                }
+            }
+
+            let respondent_id = &poll_answer.user.id.into();
+            message_id_opt = Some(poll_id_map.get(respondent_id).unwrap().clone());
+        }
+    }
+
     let poll_id = poll_answer.poll_id;
-    bot.send_message(poll_answer.user.id, poll_id).await?;
+
+    if let Some(message_id) = message_id_opt {
+        bot.stop_poll(poll_answer.user.id, message_id).await?;
+    }
+
+    bot.send_message(poll_answer.user.id, format!("{:?}", selected))
+        .await?;
     Ok(())
 }
 

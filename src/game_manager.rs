@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use rand::{seq::SliceRandom, thread_rng};
-use teloxide::types::{ChatId, Poll, MessageId};
+use teloxide::types::{ChatId, MessageId};
 
 use crate::lobby_manager::Lobby;
 
@@ -39,6 +39,7 @@ pub enum GamePhase {
     Voting {
         count: i32,
         poll_id_map: HashMap<ChatId, MessageId>,
+        vote_options: Vec<(ChatId, String)>,
         votes: HashMap<ChatId, i32>,
         prev_votes: Option<HashMap<ChatId, i32>>,
     },
@@ -46,6 +47,9 @@ pub enum GamePhase {
         count: i32,
     },
 }
+
+pub const NOBODY_VOTE_OPTION: ChatId = ChatId(-1);
+pub const ABSTAIN_VOTE_OPTION: ChatId = ChatId(-2);
 
 impl Game {
     pub fn from_lobby(lobby: &Lobby) -> Game {
@@ -97,6 +101,23 @@ impl Game {
 
     pub fn get_player(&self, chat_id: ChatId) -> Option<&Player> {
         self.players.iter().find(|p| p.player_id == chat_id)
+    }
+
+    pub fn get_alive_players(&self) -> impl Iterator<Item = &Player> {
+        self.players.iter().filter(|p| p.is_alive)
+    }
+
+    pub fn get_vote_targets(&self) -> impl Iterator<Item = (ChatId, String)> + '_ {
+        let options = vec![
+            (NOBODY_VOTE_OPTION, "Nobody".to_string()),
+            (ABSTAIN_VOTE_OPTION, "Abstain".to_string()),
+        ]
+        .into_iter();
+
+        self.players
+            .iter()
+            .map(|p| (p.player_id, p.username.clone()))
+            .chain(options)
     }
 
     pub fn get_role(&self, chat_id: ChatId) -> Option<Role> {
@@ -155,11 +176,16 @@ impl Game {
                 }
             }
 
+            let mut votes = HashMap::new();
+            votes.insert(NOBODY_VOTE_OPTION, 0);
+            votes.insert(ABSTAIN_VOTE_OPTION, 0);
+
             self.phase = GamePhase::Voting {
                 count: *count,
-                votes: HashMap::new(),
+                votes,
                 prev_votes: None,
                 poll_id_map: HashMap::new(),
+                vote_options: self.get_vote_targets().collect::<Vec<_>>(),
             };
             Ok(())
         } else {
@@ -215,7 +241,7 @@ impl GamePhase {}
 
 pub trait GameManager {
     // Gets the instantaneous lobby, if present, of a chat user.
-    fn get_player_game(&self, chat_id: ChatId) -> Option<&Game>;
+    fn get_player_game(&mut self, chat_id: ChatId) -> Option<&mut Game>;
 
     // Adds game to the map
     fn add_game(&mut self, game: Game);
