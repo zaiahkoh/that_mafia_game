@@ -37,8 +37,8 @@ pub enum GamePhase {
         count: i32,
         poll_id_map: HashMap<ChatId, MessageId>,
         vote_options: Vec<(ChatId, String)>,
-        votes: HashMap<ChatId, i32>,
-        prev_votes: Option<HashMap<ChatId, i32>>,
+        votes: HashMap<ChatId, Vec<ChatId>>,
+        prev_votes: Option<HashMap<ChatId, Vec<ChatId>>>,
     },
     Trial {
         count: i32,
@@ -106,7 +106,7 @@ impl Game {
         self.players.iter().filter(|p| p.is_alive)
     }
 
-    pub fn get_vote_targets(&self) -> impl Iterator<Item = (ChatId, String)> + '_ {
+    fn get_vote_targets(&self) -> impl Iterator<Item = (ChatId, String)> + '_ {
         let options = vec![
             (VOTE_OPTION_NOBODY, "Nobody".to_string()),
             (VOTE_OPTION_ABSTAIN, "Abstain".to_string()),
@@ -115,6 +115,7 @@ impl Game {
 
         self.players
             .iter()
+            .filter(|p| p.is_alive)
             .map(|p| (p.chat_id, p.username.clone()))
             .chain(options)
     }
@@ -163,28 +164,32 @@ impl Game {
             // Resolve actions
             for a in actions {
                 match a {
-                    Action::Kill { source, target } => {
-                        self.players
-                            .iter_mut()
-                            .find(|p| p.chat_id == *target)
-                            .unwrap()
-                            .is_alive = false;
+                    Action::Kill { target, .. } => {
+                        if let Some(target) = self.players.iter_mut().find(|p| p.chat_id == *target)
+                        {
+                            target.is_alive = false;
+                        }
                     }
                 }
             }
 
-            let mut votes = HashMap::new();
-            votes.insert(VOTE_OPTION_NOBODY, 0);
-            votes.insert(VOTE_OPTION_ABSTAIN, 0);
-
             self.phase = GamePhase::Voting {
                 count: *count,
-                votes,
+                votes: HashMap::new(),
                 prev_votes: None,
                 poll_id_map: HashMap::new(),
                 vote_options: self.get_vote_targets().collect::<Vec<_>>(),
             };
             Ok(())
+        } else {
+            Err("Internal error: is_night_done called when not GamePhase::Night")
+        }
+    }
+
+    pub fn count_voting_pending_players(&self) -> Result<usize, &'static str> {
+        if let GamePhase::Voting { .. } = &self.phase {
+            let idle_player_count = self.players.iter().filter(|p| p.is_alive).count();
+            Ok(idle_player_count)
         } else {
             Err("Internal error: is_night_done called when not GamePhase::Night")
         }
@@ -225,6 +230,60 @@ impl Game {
             }
 
             GamePhase::Trial { count } => "Not implemented yet".to_string(),
+        }
+    }
+
+    pub fn add_poll_id_map(&mut self, pim: HashMap<ChatId, MessageId>) -> Result<(), &'static str> {
+        if let GamePhase::Voting { poll_id_map, .. } = &mut self.phase {
+            pim.clone_into(poll_id_map);
+
+            Ok(())
+        } else {
+            Err("add_poll_ids called when not in GamePhase::Voting")
+        }
+    }
+
+    pub fn add_votes(
+        &mut self,
+        voter_id: ChatId,
+        chosen: Vec<i32>,
+    ) -> Result<Vec<String>, &'static str> {
+        if let GamePhase::Voting {
+            votes,
+            vote_options,
+            ..
+        } = &mut self.phase
+        {
+            let target_ids = chosen
+                .iter()
+                .map(|idx| vote_options[*idx as usize].0)
+                .collect::<Vec<_>>();
+            votes.insert(voter_id, target_ids);
+
+            let target_usernames = chosen
+                .iter()
+                .map(|idx| vote_options[*idx as usize].1.clone())
+                .collect::<Vec<_>>();
+
+            Ok(target_usernames)
+        } else {
+            Err("add_poll_ids called when not in GamePhase::Voting")
+        }
+    }
+
+    pub fn get_voter_poll_msg_id(&self, voter_id: ChatId) -> Result<MessageId, &'static str> {
+        if let GamePhase::Voting { poll_id_map, .. } = &self.phase {
+            Ok(poll_id_map[&voter_id])
+        } else {
+            Err("get_voter_poll_msg_id called when not in GamePhase::Voting")
+        }
+    }
+
+    pub fn get_vote_options(&self) -> Result<Vec<(ChatId, String)>, &'static str> {
+        if let GamePhase::Voting { vote_options, .. } = &self.phase {
+            Ok(vote_options.clone())
+        } else {
+            Err("get_voter_poll_msg_id called when not in GamePhase::Voting")
         }
     }
 }
