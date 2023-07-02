@@ -42,6 +42,7 @@ pub enum GamePhase {
     },
     Trial {
         count: i32,
+        defendant: ChatId,
     },
 }
 
@@ -229,7 +230,10 @@ impl Game {
                 }
             }
 
-            GamePhase::Trial { count } => "Not implemented yet".to_string(),
+            GamePhase::Trial {
+                count,
+                defendant,
+            } => "Not implemented yet".to_string(),
         }
     }
 
@@ -286,14 +290,91 @@ impl Game {
             Err("get_voter_poll_msg_id called when not in GamePhase::Voting")
         }
     }
+
+    fn is_voting_stalemate(&self) -> bool {
+        if let GamePhase::Voting {
+            votes, prev_votes, ..
+        } = &self.phase
+        {
+            if let Some(prev) = prev_votes {
+                if votes.len() != prev.len() {
+                    return false;
+                }
+                for (chat_id, targets) in votes.iter() {
+                    if let Some(reference) = prev.get(chat_id) {
+                        for t in targets {
+                            if reference.iter().find(|x| *x == t).is_none() {
+                                return false;
+                            }
+                        }
+                    } else {
+                        return false;
+                    }
+                }
+                true
+            } else {
+                false
+            }
+        } else {
+            panic!("is_voting_stalemate")
+        }
+    }
+
+    pub fn end_voting(&mut self) -> Result<(), &'static str> {
+        if let GamePhase::Voting {
+            count,
+            vote_options,
+            votes,
+            ..
+        } = &self.phase
+        {
+            self.previous = Some(Box::new(self.clone()));
+
+            let mut tally = HashMap::new();
+            for v in vote_options {
+                tally.insert(v.0, 0);
+            }
+            for v in votes.values() {
+                for choice in v {
+                    *tally.get_mut(choice).unwrap() += 1;
+                }
+            }
+
+            let (top_target, top_vote_count) =
+                tally.iter().max_by_key(|(_k, v)| v.clone()).unwrap();
+            let tied_targets = tally.iter().filter(|(_k, v)| *v == top_vote_count);
+            let tied_count = tied_targets.count();
+
+            if self.is_voting_stalemate() || tied_count == 1 && top_target == &VOTE_OPTION_NOBODY {
+                // Move to night
+                self.previous = Some(Box::new(self.clone()));
+                self.phase = GamePhase::Night {
+                    count: *count,
+                    actions: Vec::new(),
+                };
+            } else if tied_count == 1 {
+                // Move to trial
+                self.previous = Some(Box::new(self.clone()));
+                self.phase = GamePhase::Trial {
+                    count: *count,
+                    defendant: *top_target,
+                };
+            } else if tied_count != 1 {
+                // Revote
+                
+            }
+
+            Ok(())
+        } else {
+            Err("Internal error: end_voting caleld when not GamePhase::Voting")
+        }
+    }
 }
 
 #[derive(Clone)]
 pub enum Action {
     Kill { source: ChatId, target: ChatId },
 }
-
-impl GamePhase {}
 
 pub trait GameManager {
     // Gets the instantaneous lobby, if present, of a chat user.

@@ -326,6 +326,14 @@ async fn handle_vote(
     Ok(())
 }
 
+async fn start_trial(
+    host_id: ChatId,
+    bot: Bot,
+    bot_state: AsyncBotState,
+) -> Result<(), &'static str> {
+    todo!()
+}
+
 fn handle_trial() -> Result<(), teloxide::RequestError> {
     todo!()
 }
