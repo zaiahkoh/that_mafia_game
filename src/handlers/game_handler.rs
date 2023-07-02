@@ -81,7 +81,7 @@ fn make_player_keyboard(game: &Game) -> InlineKeyboardMarkup {
     for player in game.players.iter() {
         let row = vec![InlineKeyboardButton::callback(
             player.username.to_string(),
-            player.player_id.to_string(),
+            player.chat_id.to_string(),
         )];
         keyboard.push(row);
     }
@@ -93,20 +93,23 @@ fn make_player_keyboard(game: &Game) -> InlineKeyboardMarkup {
 }
 
 pub async fn start_night(game: &Game, bot: Bot) -> Result<(), &'static str> {
-    let mut set = JoinSet::new();
+    let mut message_set = JoinSet::new();
 
+    // Send starting messages
     for player in game.players.iter() {
         let temp = bot.clone();
-        let id = player.player_id;
-        let shared_game = Arc::new(game.clone());
-        set.spawn(async move {
-            let role = shared_game.get_role(id).unwrap();
-            temp.send_message(id, format!("Good evening everynyan. You are a {:?}", role))
-                .await
+        let chat_id = player.chat_id;
+        let role = player.role;
+        message_set.spawn(async move {
+            temp.send_message(
+                chat_id,
+                format!("Good evening everynyan. You are a {:?}", role),
+            )
+            .await
         });
     }
 
-    while let Some(join_res) = set.join_next().await {
+    while let Some(join_res) = message_set.join_next().await {
         match join_res {
             Ok(tele_res) => {
                 if let Err(_) = tele_res {
@@ -119,27 +122,27 @@ pub async fn start_night(game: &Game, bot: Bot) -> Result<(), &'static str> {
         }
     }
 
+    // Send targetting messages
     for player in game
         .players
         .iter()
         .filter(|p| matches!(p.role, Role::Mafia))
     {
         let temp = bot.clone();
-        let id = player.player_id;
-        let shared_game = Arc::new(game.clone());
-        set.spawn(async move {
-            let role = shared_game.get_role(id).unwrap();
-            temp.send_message(id, "Pick a target: ")
-                .reply_markup(make_player_keyboard(&shared_game))
+        let chat_id = player.chat_id;
+        let keyboard = make_player_keyboard(game);
+        message_set.spawn(async move {
+            temp.send_message(chat_id, "Pick a target: ")
+                .reply_markup(keyboard)
                 .await
         });
     }
 
-    while let Some(join_res) = set.join_next().await {
+    while let Some(join_res) = message_set.join_next().await {
         match join_res {
             Ok(tele_res) => {
                 if let Err(_) = tele_res {
-                    return Err("Failed to send starting message");
+                    return Err("Failed to send targetting message");
                 }
             }
             Err(_) => {
@@ -156,65 +159,51 @@ async fn handle_night(
     bot: Bot,
     q: CallbackQuery,
 ) -> Result<(), RequestError> {
-    if let Some(target) = q.data.as_ref() {
-        let text = format!("You chose: {target}");
-
-        bot.answer_callback_query(q.id).await?;
-
-        if let Some(Message { id, chat, .. }) = q.message {
-            bot.edit_message_text(chat.id, id, text).await?;
-        } else if let Some(id) = q.inline_message_id {
-            bot.edit_message_text_inline(id, text).await?;
-        }
-    }
-
-    let chat_id = ChatId::from(q.from.id);
-    let mut opt = None;
+    // Add night_action to game
+    let source_id = ChatId::from(q.from.id);
+    let target_id = ChatId(q.data.as_ref().unwrap().parse::<i64>().unwrap());
+    let mut game_snapshot = None;
     {
         // Wrap code in braces to release lock on bot_state
         let mut state_lock = bot_state.lock().unwrap();
-        let mut game = state_lock
+
+        let game = state_lock
             .game_manager
             .get_player_game(q.from.id.into())
-            .unwrap()
-            .clone();
+            .unwrap();
 
         game.push_night_action(Action::Kill {
-            source: chat_id,
-            target: ChatId(q.data.as_ref().unwrap().parse::<i64>().unwrap()),
-        })
-        .unwrap();
+            source: source_id,
+            target: target_id,
+        });
 
-        state_lock.game_manager.update_game(game.clone(), chat_id);
-
-        opt = Some(game.clone());
+        game_snapshot = Some(game.clone());
     }
 
-    let game = opt.as_ref().unwrap();
+    // Answer callback query
+    let game = game_snapshot.as_ref().unwrap();
+    bot.answer_callback_query(q.id).await?;
+    if let Some(Message { id, chat, .. }) = q.message {
+        let target_username = game.get_player(target_id).unwrap().username.clone();
+        bot.edit_message_text(chat.id, id, format!("You chose: {target_username}"))
+            .await?;
+    }
+
+    // Check to send next night;
     let pending_player_count = game.count_night_pending_players().unwrap();
-
-    bot.send_message(
-        chat_id,
-        format!("Remaining players: {pending_player_count}"),
-    )
-    .await?;
-
     if pending_player_count == 0 {
-        let mut temp = None;
         {
             let mut state_lock = bot_state.lock().unwrap();
-            let mut game = state_lock
+            let game = state_lock
                 .game_manager
                 .get_player_game(q.from.id.into())
-                .as_mut()
-                .unwrap()
-                .clone();
+                .unwrap();
             game.end_night();
-            state_lock.game_manager.update_game(game.clone(), chat_id);
-            temp = Some(game);
+            game_snapshot = Some(game.clone());
         }
-        start_voting(temp.as_ref().unwrap(), bot, bot_state).await;
+        start_voting(game_snapshot.as_ref().unwrap(), bot, bot_state).await;
     }
+
     Ok(())
 }
 
@@ -224,14 +213,14 @@ async fn start_voting(game: &Game, bot: Bot, bot_state: AsyncBotState) -> Result
     let mut set = JoinSet::new();
     let mut player_text = game
         .get_alive_players()
-        .map(|p| p.player_id.0.to_string())
+        .map(|p| p.chat_id.0.to_string())
         .collect::<Vec<_>>();
     player_text.push("Nobody".to_owned());
     player_text.push("Abstain".to_string());
 
     for player in game.players.iter() {
         let temp = bot.clone();
-        let chat_id = player.player_id;
+        let chat_id = player.chat_id;
         let transition_message = game.get_transition_message();
         let option_text = player_text.clone();
 
@@ -278,7 +267,7 @@ async fn start_voting(game: &Game, bot: Bot, bot_state: AsyncBotState) -> Result
         panic!("game was not in voting phase");
     }
 
-    let chat_id = game.players.first().unwrap().player_id;
+    let chat_id = game.players.first().unwrap().chat_id;
     bot_state
         .lock()
         .unwrap()

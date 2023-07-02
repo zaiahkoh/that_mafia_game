@@ -13,15 +13,12 @@ pub enum Role {
 
 #[derive(Clone)]
 pub struct Player {
-    pub player_id: ChatId,
+    pub chat_id: ChatId,
     pub username: String,
     pub role: Role,
     pub is_alive: bool,
     pub is_connected: bool,
 }
-
-#[derive(Eq, Hash, PartialEq, Copy, Clone, derive_more::Display)]
-pub struct GameId(pub i32);
 
 #[derive(Clone)]
 pub struct Game {
@@ -48,8 +45,8 @@ pub enum GamePhase {
     },
 }
 
-pub const NOBODY_VOTE_OPTION: ChatId = ChatId(-1);
-pub const ABSTAIN_VOTE_OPTION: ChatId = ChatId(-2);
+pub const VOTE_OPTION_NOBODY: ChatId = ChatId(-1);
+pub const VOTE_OPTION_ABSTAIN: ChatId = ChatId(-2);
 
 impl Game {
     pub fn from_lobby(lobby: &Lobby) -> Game {
@@ -58,19 +55,21 @@ impl Game {
         roles[0] = Role::Mafia;
         roles.shuffle(&mut thread_rng());
 
+        let players = lobby
+            .players
+            .iter()
+            .zip(roles)
+            .map(|(p, r)| Player {
+                chat_id: p.player_id,
+                username: p.username.clone(),
+                is_alive: true,
+                role: r,
+                is_connected: true,
+            })
+            .collect::<Vec<_>>();
+
         Game {
-            players: lobby
-                .players
-                .iter()
-                .zip(roles)
-                .map(|(p, r)| Player {
-                    player_id: p.player_id,
-                    username: p.username.clone(),
-                    is_alive: true,
-                    role: r,
-                    is_connected: true,
-                })
-                .collect::<Vec<_>>(),
+            players,
             phase: GamePhase::Night {
                 count: 0,
                 actions: vec![],
@@ -88,7 +87,7 @@ impl Game {
         let civilian_count = self
             .players
             .iter()
-            .filter(|p| !matches!(p.role, Role::Mafia))
+            .filter(|p| !matches!(p.role, Role::Civilian))
             .count();
         if mafia_count == 0 {
             Some(String::from("Civilians"))
@@ -100,7 +99,7 @@ impl Game {
     }
 
     pub fn get_player(&self, chat_id: ChatId) -> Option<&Player> {
-        self.players.iter().find(|p| p.player_id == chat_id)
+        self.players.iter().find(|p| p.chat_id == chat_id)
     }
 
     pub fn get_alive_players(&self) -> impl Iterator<Item = &Player> {
@@ -109,21 +108,21 @@ impl Game {
 
     pub fn get_vote_targets(&self) -> impl Iterator<Item = (ChatId, String)> + '_ {
         let options = vec![
-            (NOBODY_VOTE_OPTION, "Nobody".to_string()),
-            (ABSTAIN_VOTE_OPTION, "Abstain".to_string()),
+            (VOTE_OPTION_NOBODY, "Nobody".to_string()),
+            (VOTE_OPTION_ABSTAIN, "Abstain".to_string()),
         ]
         .into_iter();
 
         self.players
             .iter()
-            .map(|p| (p.player_id, p.username.clone()))
+            .map(|p| (p.chat_id, p.username.clone()))
             .chain(options)
     }
 
     pub fn get_role(&self, chat_id: ChatId) -> Option<Role> {
         self.players
             .iter()
-            .find(|p| p.player_id == chat_id)?
+            .find(|p| p.chat_id == chat_id)?
             .role
             .into()
     }
@@ -139,20 +138,18 @@ impl Game {
 
     pub fn count_night_pending_players(&self) -> Result<usize, &'static str> {
         if let GamePhase::Night { actions, .. } = &self.phase {
-            let idle_player_count = self
-                .players
-                .iter()
-                .filter(|p| match p.role {
-                    Role::Mafia => actions
-                        .iter()
-                        .find(|a| match a {
-                            Action::Kill { source, .. } if source == &p.player_id => true,
-                            _ => false,
-                        })
-                        .is_none(),
-                    Role::Civilian => false,
-                })
-                .count();
+            let is_player_idle = |p: &&Player| match p.role {
+                Role::Mafia => actions
+                    .iter()
+                    .find(|a| match a {
+                        Action::Kill { source, .. } if source == &p.chat_id => true,
+                        _ => false,
+                    })
+                    .is_none(),
+                Role::Civilian => false,
+            };
+
+            let idle_player_count = self.players.iter().filter(is_player_idle).count();
 
             Ok(idle_player_count)
         } else {
@@ -169,7 +166,7 @@ impl Game {
                     Action::Kill { source, target } => {
                         self.players
                             .iter_mut()
-                            .find(|p| p.player_id == *target)
+                            .find(|p| p.chat_id == *target)
                             .unwrap()
                             .is_alive = false;
                     }
@@ -177,8 +174,8 @@ impl Game {
             }
 
             let mut votes = HashMap::new();
-            votes.insert(NOBODY_VOTE_OPTION, 0);
-            votes.insert(ABSTAIN_VOTE_OPTION, 0);
+            votes.insert(VOTE_OPTION_NOBODY, 0);
+            votes.insert(VOTE_OPTION_ABSTAIN, 0);
 
             self.phase = GamePhase::Voting {
                 count: *count,
@@ -216,7 +213,7 @@ impl Game {
                 {
                     let killed_player_names = players
                         .iter()
-                        .filter(|p| p.is_alive && !self.get_player(p.player_id).unwrap().is_alive)
+                        .filter(|p| p.is_alive && !self.get_player(p.chat_id).unwrap().is_alive)
                         .map(|p| p.username.clone())
                         .collect::<Vec<_>>()
                         .join(", ");

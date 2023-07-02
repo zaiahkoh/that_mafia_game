@@ -1,7 +1,10 @@
-use super::{Game, GameId, GameManager};
+use super::{Game, GameManager};
 use rand::Rng;
 use std::collections::HashMap;
 use teloxide::types::ChatId;
+
+#[derive(Eq, Hash, PartialEq, Copy, Clone, derive_more::Display)]
+pub struct GameId(pub i32);
 
 pub struct LocalGameManager {
     games: HashMap<GameId, Game>,
@@ -31,7 +34,7 @@ impl GameManager for LocalGameManager {
         }
 
         for p in game.players.iter() {
-            self.player_map.insert(p.player_id, game_id);   
+            self.player_map.insert(p.chat_id, game_id);
         }
 
         self.games.insert(game_id, game);
@@ -49,7 +52,7 @@ impl GameManager for LocalGameManager {
                 let player = game
                     .players
                     .iter_mut()
-                    .find(|p| p.player_id == chat_id)
+                    .find(|p| p.chat_id == chat_id)
                     .unwrap();
                 player.is_connected = false;
 
