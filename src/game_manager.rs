@@ -197,8 +197,12 @@ impl Game {
     }
 
     pub fn count_voting_pending_players(&self) -> Result<usize, &'static str> {
-        if let GamePhase::Voting { .. } = &self.phase {
-            let idle_player_count = self.players.iter().filter(|p| p.is_alive).count();
+        if let GamePhase::Voting { votes, .. } = &self.phase {
+            let idle_player_count = self
+                .players
+                .iter()
+                .filter(|p| p.is_alive && !votes.contains_key(&p.chat_id))
+                .count();
             Ok(idle_player_count)
         } else {
             Err("Internal error: is_night_done called when not GamePhase::Night")
@@ -206,7 +210,7 @@ impl Game {
     }
 
     pub fn get_transition_message(&self) -> &String {
-        return &self.transition_message
+        return &self.transition_message;
     }
 
     pub fn add_poll_id_map(&mut self, pim: HashMap<ChatId, MessageId>) -> Result<(), &'static str> {
@@ -276,10 +280,18 @@ impl Game {
                     }
                     for (chat_id, targets) in votes.iter() {
                         if let Some(reference) = prev.get(chat_id) {
+                            let mut old_set = HashSet::new();
+                            for r in reference {
+                                old_set.insert(r);
+                            }
+
+                            let mut curr_set = HashSet::new();
                             for t in targets {
-                                if reference.iter().find(|x| *x == t).is_none() {
-                                    return false;
-                                }
+                                curr_set.insert(t);
+                            }
+
+                            if !curr_set.is_subset(&old_set) || !old_set.is_subset(&curr_set) {
+                                return false;
                             }
                         } else {
                             return false;
@@ -300,8 +312,6 @@ impl Game {
             ..
         } = &self.phase
         {
-            self.previous = Some(Box::new(self.clone()));
-
             let mut tally = HashMap::new();
             for v in vote_options {
                 tally.insert(v.0, 0);
@@ -320,6 +330,8 @@ impl Game {
                 .map(|(k, _v)| k);
             let tied_count = tied_targets.cloned().count();
             let is_voting_stalemate = self.is_voting_stalemate();
+
+            self.previous = Some(Box::new(self.clone()));
 
             self.phase =
                 if is_voting_stalemate || tied_count == 1 && top_target == &VOTE_OPTION_NOBODY {

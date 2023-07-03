@@ -1,7 +1,10 @@
 use teloxide::{prelude::*, utils::command::BotCommands};
 
 use super::{game_handler::start_night, AsyncBotState};
-use crate::{game_manager::{Game, GameManager}, lobby_manager::LobbyManager};
+use crate::{
+    game_manager::{Game, GameManager},
+    lobby_manager::LobbyManager,
+};
 
 pub fn get_lobby_handler() -> Handler<
     'static,
@@ -95,7 +98,7 @@ async fn lobby_handler(
 
     bot.send_message(msg.chat.id, text).await?;
     if let Some(game) = o_game {
-        start_night(&game, bot).await;
+        start_night(msg.chat.id, bot, bot_state).await;
     }
 
     Ok(())

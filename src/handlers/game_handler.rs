@@ -98,7 +98,18 @@ fn make_player_keyboard(game: &Game) -> InlineKeyboardMarkup {
     InlineKeyboardMarkup::new(keyboard)
 }
 
-pub async fn start_night(game: &Game, bot: Bot) -> Result<(), &'static str> {
+pub async fn start_night(
+    chat_id: ChatId,
+    bot: Bot,
+    bot_state: AsyncBotState,
+) -> Result<(), &'static str> {
+    let mut game_snapshot = None;
+    {
+        let mut state_lock = bot_state.lock().unwrap();
+        let game = state_lock.game_manager.get_player_game(chat_id).unwrap();
+        game_snapshot = Some(game.clone());
+    }
+    let game = game_snapshot.unwrap();
     let mut message_set = JoinSet::new();
 
     // Send starting messages
@@ -106,13 +117,8 @@ pub async fn start_night(game: &Game, bot: Bot) -> Result<(), &'static str> {
         let temp = bot.clone();
         let chat_id = player.chat_id;
         let role = player.role;
-        message_set.spawn(async move {
-            temp.send_message(
-                chat_id,
-                format!("Good evening everynyan. You are a {:?}", role),
-            )
-            .await
-        });
+        let text = game.get_transition_message().clone();
+        message_set.spawn(async move { temp.send_message(chat_id, text).await });
     }
 
     while let Some(join_res) = message_set.join_next().await {
@@ -136,9 +142,9 @@ pub async fn start_night(game: &Game, bot: Bot) -> Result<(), &'static str> {
     {
         let temp = bot.clone();
         let chat_id = player.chat_id;
-        let keyboard = make_player_keyboard(game);
+        let keyboard = make_player_keyboard(&game);
         message_set.spawn(async move {
-            temp.send_message(chat_id, "Pick a target: ")
+            temp.send_message(chat_id, "You are a Mafia. Pick a kill target: ")
                 .reply_markup(keyboard)
                 .await
         });
@@ -311,6 +317,7 @@ async fn handle_vote(
     let chat_id = ChatId::from(poll_answer.user.id);
     let mut message_id_opt = None;
     let mut target_username_opt = None;
+    let mut game_snapshot = None;
 
     // Add votes to game
     {
@@ -318,7 +325,9 @@ async fn handle_vote(
         let game = state_lock.game_manager.get_player_game(chat_id).unwrap();
         target_username_opt = Some(game.add_votes(chat_id, poll_answer.option_ids).unwrap());
         message_id_opt = Some(game.get_voter_poll_msg_id(chat_id).unwrap());
+        game_snapshot = Some(game.clone());
     }
+    let game = game_snapshot.unwrap();
 
     if let Some(message_id) = message_id_opt {
         bot.stop_poll(poll_answer.user.id, message_id).await?;
@@ -329,6 +338,34 @@ async fn handle_vote(
         format!("You voted for: {:?}", target_username_opt.unwrap()),
     )
     .await?;
+
+    bot.send_message(
+        poll_answer.user.id,
+        format!("Number of players who haven't voted {}", game.count_voting_pending_players().unwrap()),
+    )
+    .await?;
+
+    if game.count_voting_pending_players().unwrap() == 0 {
+        {
+            let state_lock = &mut bot_state.lock().unwrap();
+            let game = state_lock.game_manager.get_player_game(chat_id).unwrap();
+            game.end_voting();
+            game_snapshot = Some(game.clone());
+        }
+        let game = game_snapshot.unwrap();
+        match game.phase {
+            GamePhase::Night { .. } => {
+                start_night(chat_id, bot, bot_state).await;
+            }
+            GamePhase::Trial { .. } => {
+                start_trial(chat_id, bot, bot_state).await;
+            }
+            GamePhase::Voting { .. } => {
+                start_voting(chat_id, bot, bot_state).await;
+            }
+        }
+    }
+
     Ok(())
 }
 
