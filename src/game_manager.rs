@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use rand::{seq::SliceRandom, thread_rng};
 use teloxide::types::{ChatId, MessageId};
@@ -24,7 +24,8 @@ pub struct Player {
 pub struct Game {
     pub players: Vec<Player>,
     pub phase: GamePhase,
-    pub previous: Option<Box<Game>>,
+    previous: Option<Box<Game>>,
+    transition_message: String,
 }
 
 #[derive(Clone)]
@@ -38,7 +39,6 @@ pub enum GamePhase {
         poll_id_map: HashMap<ChatId, MessageId>,
         vote_options: Vec<(ChatId, String)>,
         votes: HashMap<ChatId, Vec<ChatId>>,
-        prev_votes: Option<HashMap<ChatId, Vec<ChatId>>>,
     },
     Trial {
         count: i32,
@@ -76,6 +76,7 @@ impl Game {
                 actions: vec![],
             },
             previous: None,
+            transition_message: String::from("Welcome everynyan!"),
         }
     }
 
@@ -162,22 +163,30 @@ impl Game {
     pub fn end_night(&mut self) -> Result<(), &'static str> {
         if let GamePhase::Night { actions, count } = &self.phase {
             self.previous = Some(Box::new(self.clone()));
+
             // Resolve actions
+            let mut killed_usernames = Vec::new();
             for a in actions {
                 match a {
                     Action::Kill { target, .. } => {
                         if let Some(target) = self.players.iter_mut().find(|p| p.chat_id == *target)
                         {
                             target.is_alive = false;
+                            killed_usernames.push(target.username.clone());
                         }
                     }
                 }
             }
 
+            // Update state
+            self.transition_message = if killed_usernames.len() > 0 {
+                format!("{} died last night", killed_usernames.join(", "))
+            } else {
+                format!("Nobody died last night")
+            };
             self.phase = GamePhase::Voting {
                 count: *count,
                 votes: HashMap::new(),
-                prev_votes: None,
                 poll_id_map: HashMap::new(),
                 vote_options: self.get_vote_targets().collect::<Vec<_>>(),
             };
@@ -230,10 +239,7 @@ impl Game {
                 }
             }
 
-            GamePhase::Trial {
-                count,
-                defendant,
-            } => "Not implemented yet".to_string(),
+            GamePhase::Trial { count, defendant } => "Not implemented yet".to_string(),
         }
     }
 
@@ -292,32 +298,32 @@ impl Game {
     }
 
     fn is_voting_stalemate(&self) -> bool {
-        if let GamePhase::Voting {
-            votes, prev_votes, ..
-        } = &self.phase
-        {
-            if let Some(prev) = prev_votes {
-                if votes.len() != prev.len() {
-                    return false;
-                }
-                for (chat_id, targets) in votes.iter() {
-                    if let Some(reference) = prev.get(chat_id) {
-                        for t in targets {
-                            if reference.iter().find(|x| *x == t).is_none() {
-                                return false;
-                            }
-                        }
-                    } else {
+        if let GamePhase::Voting { votes, .. } = &self.phase {
+            if let Some(inner) = &self.previous {
+                if let Game {
+                    phase: GamePhase::Voting { votes: prev, .. },
+                    ..
+                } = &**inner
+                {
+                    if votes.len() != prev.len() {
                         return false;
                     }
+                    for (chat_id, targets) in votes.iter() {
+                        if let Some(reference) = prev.get(chat_id) {
+                            for t in targets {
+                                if reference.iter().find(|x| *x == t).is_none() {
+                                    return false;
+                                }
+                            }
+                        } else {
+                            return false;
+                        }
+                    }
+                    return true;
                 }
-                true
-            } else {
-                false
             }
-        } else {
-            panic!("is_voting_stalemate")
         }
+        false
     }
 
     pub fn end_voting(&mut self) -> Result<(), &'static str> {
@@ -345,24 +351,29 @@ impl Game {
             let tied_targets = tally.iter().filter(|(_k, v)| *v == top_vote_count);
             let tied_count = tied_targets.count();
 
-            if self.is_voting_stalemate() || tied_count == 1 && top_target == &VOTE_OPTION_NOBODY {
+            self.phase = if self.is_voting_stalemate()
+                || tied_count == 1 && top_target == &VOTE_OPTION_NOBODY
+            {
                 // Move to night
-                self.previous = Some(Box::new(self.clone()));
-                self.phase = GamePhase::Night {
+                GamePhase::Night {
                     count: *count,
                     actions: Vec::new(),
-                };
+                }
             } else if tied_count == 1 {
                 // Move to trial
-                self.previous = Some(Box::new(self.clone()));
-                self.phase = GamePhase::Trial {
+                GamePhase::Trial {
                     count: *count,
                     defendant: *top_target,
-                };
-            } else if tied_count != 1 {
-                // Revote
-                
-            }
+                }
+            } else {
+                // Move to re-vote
+                GamePhase::Voting {
+                    count: *count,
+                    poll_id_map: HashMap::new(),
+                    vote_options: Vec::new(),
+                    votes: HashMap::new(),
+                }
+            };
 
             Ok(())
         } else {
