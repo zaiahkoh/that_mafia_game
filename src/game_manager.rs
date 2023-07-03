@@ -205,42 +205,8 @@ impl Game {
         }
     }
 
-    pub fn get_transition_message(&self) -> String {
-        match &self.phase {
-            GamePhase::Night { count, actions } => {
-                if let Some(Game {
-                    players,
-                    phase: GamePhase::Trial { .. },
-                    ..
-                }) = self.previous.as_deref()
-                {
-                    "Not implemented yet".to_string()
-                } else {
-                    panic!("get_transition_message: game.previous.phase does not match")
-                }
-            }
-            GamePhase::Voting { count, .. } => {
-                if let Some(Game {
-                    players,
-                    phase: GamePhase::Night { .. },
-                    ..
-                }) = self.previous.as_deref()
-                {
-                    let killed_player_names = players
-                        .iter()
-                        .filter(|p| p.is_alive && !self.get_player(p.chat_id).unwrap().is_alive)
-                        .map(|p| p.username.clone())
-                        .collect::<Vec<_>>()
-                        .join(", ");
-
-                    format!("{killed_player_names} were killed last night!")
-                } else {
-                    panic!("get_transition_message: game.previous.phase does not match")
-                }
-            }
-
-            GamePhase::Trial { count, defendant } => "Not implemented yet".to_string(),
-        }
+    pub fn get_transition_message(&self) -> &String {
+        return &self.transition_message
     }
 
     pub fn add_poll_id_map(&mut self, pim: HashMap<ChatId, MessageId>) -> Result<(), &'static str> {
@@ -348,32 +314,45 @@ impl Game {
 
             let (top_target, top_vote_count) =
                 tally.iter().max_by_key(|(_k, v)| v.clone()).unwrap();
-            let tied_targets = tally.iter().filter(|(_k, v)| *v == top_vote_count);
-            let tied_count = tied_targets.count();
+            let tied_targets = tally
+                .iter()
+                .filter(|(_k, v)| *v == top_vote_count)
+                .map(|(k, _v)| k);
+            let tied_count = tied_targets.cloned().count();
+            let is_voting_stalemate = self.is_voting_stalemate();
 
-            self.phase = if self.is_voting_stalemate()
-                || tied_count == 1 && top_target == &VOTE_OPTION_NOBODY
-            {
-                // Move to night
-                GamePhase::Night {
-                    count: *count,
-                    actions: Vec::new(),
-                }
-            } else if tied_count == 1 {
-                // Move to trial
-                GamePhase::Trial {
-                    count: *count,
-                    defendant: *top_target,
-                }
-            } else {
-                // Move to re-vote
-                GamePhase::Voting {
-                    count: *count,
-                    poll_id_map: HashMap::new(),
-                    vote_options: Vec::new(),
-                    votes: HashMap::new(),
-                }
-            };
+            self.phase =
+                if is_voting_stalemate || tied_count == 1 && top_target == &VOTE_OPTION_NOBODY {
+                    self.transition_message = if is_voting_stalemate {
+                        format!("No change in votes 2 rounds in a row. Moving to night time...")
+                    } else {
+                        format!("Most popular vote was not to lynch. Moving to night time...")
+                    };
+                    // Move to night
+                    GamePhase::Night {
+                        count: *count,
+                        actions: Vec::new(),
+                    }
+                } else if tied_count == 1 {
+                    let defendant_username = &self.get_player(*top_target).unwrap().username;
+                    self.transition_message =
+                        format!("Now begins the trial for {defendant_username}:",);
+                    // Move to trial
+                    GamePhase::Trial {
+                        count: *count,
+                        defendant: *top_target,
+                    }
+                } else {
+                    self.transition_message =
+                        format!("Multiple options were tied for first place. Moving to re-vote");
+                    // Move to re-vote
+                    GamePhase::Voting {
+                        count: *count,
+                        poll_id_map: HashMap::new(),
+                        vote_options: self.get_vote_targets().collect::<Vec<_>>(),
+                        votes: HashMap::new(),
+                    }
+                };
 
             Ok(())
         } else {

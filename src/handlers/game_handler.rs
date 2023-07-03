@@ -4,7 +4,7 @@ use std::{collections::HashMap, sync::Arc};
 use teloxide::{
     dispatching::UpdateFilterExt,
     prelude::*,
-    types::{InlineKeyboardButton, InlineKeyboardMarkup, Poll},
+    types::{Chat, InlineKeyboardButton, InlineKeyboardMarkup, Poll},
     RequestError,
 };
 use tokio::task::JoinSet;
@@ -63,15 +63,21 @@ pub fn get_game_handler() -> Handler<
                 })
                 .endpoint(handle_vote),
         )
+        .branch(
+            Update::filter_message()
+                .filter(|msg: Message, bot_state: AsyncBotState| {
+                    bot_state
+                        .lock()
+                        .unwrap()
+                        .game_manager
+                        .get_player_game(msg.chat.id)
+                        .is_some()
+                })
+                .endpoint(no_response_handler),
+        )
 }
 
-async fn test_poll_handler(
-    bot_state: AsyncBotState,
-    bot: Bot,
-    poll_answer: PollAnswer,
-) -> Result<(), RequestError> {
-    bot.send_message(poll_answer.user.id, "whatsapp").await?;
-
+async fn no_response_handler(_bot_state: AsyncBotState, _bot: Bot) -> Result<(), RequestError> {
     Ok(())
 }
 
@@ -241,7 +247,7 @@ async fn start_voting(
     for player in game.players.iter() {
         let temp = bot.clone();
         let chat_id = player.chat_id;
-        let transition_message = game.get_transition_message();
+        let transition_message = game.get_transition_message().clone();
         let option_text = votable_usernames.clone();
 
         message_set.spawn(async move {
