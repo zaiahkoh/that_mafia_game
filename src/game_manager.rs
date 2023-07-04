@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+};
 
 use rand::{seq::SliceRandom, thread_rng};
 use teloxide::types::{ChatId, MessageId};
@@ -43,7 +46,26 @@ pub enum GamePhase {
     Trial {
         count: i32,
         defendant: ChatId,
+        poll_id_map: HashMap<ChatId, MessageId>,
+        verdicts: HashMap<ChatId, Verdict>,
     },
+}
+
+#[derive(Clone, Copy)]
+pub enum Verdict {
+    Guilty,
+    Innocent,
+    Abstain,
+}
+
+impl fmt::Display for Verdict {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Verdict::Guilty => write!(f, "Guilty"),
+            Verdict::Innocent => write!(f, "Innocent"),
+            Verdict::Abstain => write!(f, "Abstain"),
+        }
+    }
 }
 
 pub const VOTE_OPTION_NOBODY: ChatId = ChatId(-1);
@@ -109,9 +131,9 @@ impl Game {
     }
 
     fn get_vote_targets(&self) -> impl Iterator<Item = (ChatId, String)> + '_ {
-        let options = vec![
+        let other_options = vec![
             (VOTE_OPTION_NOBODY, "Nobody".to_string()),
-            (VOTE_OPTION_ABSTAIN, "Abstain".to_string()),
+            // (VOTE_OPTION_ABSTAIN, "Abstain".to_string()),
         ]
         .into_iter();
 
@@ -119,7 +141,7 @@ impl Game {
             .iter()
             .filter(|p| p.is_alive)
             .map(|p| (p.chat_id, p.username.clone()))
-            .chain(options)
+            .chain(other_options)
     }
 
     pub fn get_role(&self, chat_id: ChatId) -> Option<Role> {
@@ -196,6 +218,23 @@ impl Game {
         }
     }
 
+    // Should only be called during Trial and Voting
+    pub fn get_voters(&self) -> Result<impl Iterator<Item = &Player>, &'static str> {
+        match &self.phase {
+            // Define pred seperately due to closure limitations
+            GamePhase::Voting { .. } => {
+                let voting_pred: Box<dyn Fn(&&Player) -> bool> = Box::new(|p: &&Player| p.is_alive);
+                Ok(self.players.iter().filter(voting_pred))
+            }
+            GamePhase::Trial { defendant, .. } => {
+                let trial_pred: Box<dyn Fn(&&Player) -> bool> =
+                    Box::new(|p: &&Player| p.is_alive && p.chat_id != *defendant);
+                Ok(self.players.iter().filter(trial_pred))
+            }
+            _ => Err("get_voters called when not GamePhase::Voting"),
+        }
+    }
+
     pub fn count_voting_pending_players(&self) -> Result<usize, &'static str> {
         if let GamePhase::Voting { votes, .. } = &self.phase {
             let idle_player_count = self
@@ -213,13 +252,18 @@ impl Game {
         return &self.transition_message;
     }
 
+    // Should be called only for Voting and Trial phases
     pub fn add_poll_id_map(&mut self, pim: HashMap<ChatId, MessageId>) -> Result<(), &'static str> {
-        if let GamePhase::Voting { poll_id_map, .. } = &mut self.phase {
-            pim.clone_into(poll_id_map);
-
-            Ok(())
-        } else {
-            Err("add_poll_ids called when not in GamePhase::Voting")
+        match &mut self.phase {
+            GamePhase::Voting { poll_id_map, .. } => {
+                pim.clone_into(poll_id_map);
+                Ok(())
+            }
+            GamePhase::Trial { poll_id_map, .. } => {
+                pim.clone_into(poll_id_map);
+                Ok(())
+            }
+            _ => Err("add_poll_ids called when not in GamePhase::Voting"),
         }
     }
 
@@ -353,6 +397,8 @@ impl Game {
                     GamePhase::Trial {
                         count: *count,
                         defendant: *top_target,
+                        poll_id_map: HashMap::new(),
+                        verdicts: HashMap::new(),
                     }
                 } else {
                     self.transition_message =
@@ -368,7 +414,102 @@ impl Game {
 
             Ok(())
         } else {
-            Err("Internal error: end_voting caleld when not GamePhase::Voting")
+            Err("Internal error: end_voting called when not GamePhase::Voting")
+        }
+    }
+
+    const trial_options: [&'static str; 3] = ["Yes", "No", "Abstain"];
+
+    pub fn get_verdict_options() -> Vec<String> {
+        vec![
+            Verdict::Guilty.to_string(),
+            Verdict::Innocent.to_string(),
+            Verdict::Abstain.to_string(),
+        ]
+    }
+
+    pub fn parse_verdict_option(choice: i32) -> Option<Verdict> {
+        match choice {
+            0 => Some(Verdict::Guilty),
+            1 => Some(Verdict::Innocent),
+            2 => Some(Verdict::Abstain),
+            _ => None,
+        }
+    }
+
+    pub fn add_jury(&mut self, jury_id: ChatId, choice: Verdict) -> Result<String, &'static str> {
+        if let GamePhase::Trial {
+            defendant,
+            poll_id_map,
+            verdicts,
+            ..
+        } = &mut self.phase
+        {
+            verdicts.insert(jury_id, choice);
+            Ok(choice.to_string())
+        } else {
+            Err("add_jury called when not in GamePhase::Trial")
+        }
+    }
+
+    pub fn count_trial_pending_players(&self) -> Result<usize, &'static str> {
+        if let GamePhase::Trial { verdicts, .. } = &self.phase {
+            let idle_player_count = self
+                .get_voters()?
+                .filter(|p| p.is_alive && !verdicts.contains_key(&p.chat_id))
+                .count();
+            Ok(idle_player_count)
+        } else {
+            Err("Internal error: count_trial_pending_players called when not GamePhase::Night")
+        }
+    }
+
+    pub fn end_trial(&mut self) -> Result<(), &'static str> {
+        if let GamePhase::Trial {
+            defendant,
+            verdicts,
+            count,
+            ..
+        } = &self.phase
+        {
+            let guilties = verdicts
+                .values()
+                .filter(|v| matches!(v, Verdict::Guilty))
+                .count();
+            let innocents = verdicts
+                .values()
+                .filter(|v| matches!(v, Verdict::Innocent))
+                .count();
+
+            let username = self.get_player(*defendant).unwrap().username.clone();
+
+            self.transition_message = if guilties >= innocents {
+                let victim = self
+                    .players
+                    .iter_mut()
+                    .find(|p| p.chat_id == *defendant)
+                    .unwrap();
+                victim.is_alive = false;
+
+                format!(
+                    "By a vote of {guilties} guilty to {innocents} innocent, {} was lynched",
+                    username
+                )
+            } else {
+                format!(
+                    "By a vote of {innocents} innocent to {guilties} guilty, {} was released",
+                    username
+                )
+            };
+
+            self.phase = GamePhase::Night {
+                count: *count,
+                actions: Vec::new(),
+            };
+
+            Ok(())
+        } else {
+            Err("Internal error: end_trial caleld when not GamePhase::Trial")
         }
     }
 }

@@ -1,6 +1,6 @@
 use super::AsyncBotState;
-use crate::game_manager::{Action, Game, GameManager, GamePhase, Role};
-use std::{collections::HashMap, sync::Arc};
+use crate::game_manager::{Action, Game, GameManager, GamePhase, Role, Verdict};
+use std::{collections::HashMap, ops::Deref, sync::Arc};
 use teloxide::{
     dispatching::UpdateFilterExt,
     prelude::*,
@@ -250,7 +250,7 @@ async fn start_voting(
         .map(|x| x.1.clone())
         .collect::<Vec<_>>();
 
-    for player in game.players.iter() {
+    for player in game.get_voters().unwrap() {
         let temp = bot.clone();
         let chat_id = player.chat_id;
         let transition_message = game.get_transition_message().clone();
@@ -260,11 +260,7 @@ async fn start_voting(
             temp.send_message(chat_id, transition_message).await;
 
             let poll_res = temp
-                .send_poll(
-                    chat_id,
-                    format!("What is your favourite color"),
-                    option_text,
-                )
+                .send_poll(chat_id, format!("Who to put on trial?"), option_text)
                 .allows_multiple_answers(true)
                 .is_anonymous(false)
                 .await;
@@ -341,7 +337,10 @@ async fn handle_vote(
 
     bot.send_message(
         poll_answer.user.id,
-        format!("Number of players who haven't voted {}", game.count_voting_pending_players().unwrap()),
+        format!(
+            "Waiting for {} more player to vote...",
+            game.count_voting_pending_players().unwrap()
+        ),
     )
     .await?;
 
@@ -369,14 +368,139 @@ async fn handle_vote(
     Ok(())
 }
 
+const trial_option_text: [&'static str; 3] = ["Yes", "No", "Abstain"];
+
 async fn start_trial(
     host_id: ChatId,
     bot: Bot,
     bot_state: AsyncBotState,
 ) -> Result<(), &'static str> {
-    todo!()
+    let mut game_snapshot = None;
+    {
+        let mut state_lock = bot_state.lock().unwrap();
+        let game = state_lock.game_manager.get_player_game(host_id).unwrap();
+        game_snapshot = Some(game.clone());
+    }
+    let game = game_snapshot.unwrap();
+
+    let mut message_set = JoinSet::new();
+    for player in game.get_voters().unwrap() {
+        let temp = bot.clone();
+        let chat_id = player.chat_id;
+        let transition_message = game.get_transition_message().clone();
+        message_set.spawn(async move {
+            temp.send_message(chat_id, transition_message).await;
+
+            let poll_res = temp
+                .send_poll(
+                    chat_id,
+                    format!("Vote on trial: "),
+                    trial_option_text.iter().map(|s| (*s).into()),
+                )
+                .is_anonymous(true)
+                .await;
+            (chat_id, poll_res)
+        });
+    }
+
+    let mut poll_id_map = HashMap::new();
+    while let Some(join_res) = message_set.join_next().await {
+        match join_res {
+            Ok((chat_id, tele_res)) => match tele_res {
+                Ok(message) => {
+                    poll_id_map.insert(chat_id, message.id);
+                }
+                Err(err) => {
+                    panic!("{err}");
+                }
+            },
+            Err(err) => {
+                panic!("{err}");
+            }
+        };
+    }
+
+    bot_state
+        .lock()
+        .unwrap()
+        .game_manager
+        .get_player_game(host_id)
+        .unwrap()
+        .add_poll_id_map(poll_id_map);
+
+    Ok(())
 }
 
-fn handle_trial() -> Result<(), teloxide::RequestError> {
-    todo!()
+async fn handle_trial(
+    bot_state: AsyncBotState,
+    bot: Bot,
+    poll_answer: PollAnswer,
+) -> Result<(), teloxide::RequestError> {
+    let chat_id = ChatId::from(poll_answer.user.id);
+    let mut message_id_opt = None;
+    let mut game_snapshot = None;
+    let mut choice_opt = Err("");
+
+    assert_eq!(
+        poll_answer.option_ids.len(),
+        1,
+        "Internal error: trial poll options_ids.len != 1"
+    );
+    let verdict = Game::parse_verdict_option(poll_answer.option_ids[0]).unwrap();
+
+    // Add jury to game
+    {
+        let state_lock = &mut bot_state.lock().unwrap();
+        let game = state_lock.game_manager.get_player_game(chat_id).unwrap();
+
+        choice_opt = game.add_jury(chat_id, verdict);
+        message_id_opt = Some(game.get_voter_poll_msg_id(chat_id).unwrap());
+        game_snapshot = Some(game.clone());
+    }
+
+    let game = game_snapshot.unwrap();
+
+    if let Some(message_id) = message_id_opt {
+        bot.stop_poll(poll_answer.user.id, message_id).await?;
+    }
+
+    bot.send_message(
+        poll_answer.user.id,
+        format!("You voted: {}", choice_opt.unwrap()),
+    )
+    .await?;
+
+    let pending_player_count = game.count_trial_pending_players().unwrap();
+
+    if pending_player_count > 0 {
+        bot.send_message(
+            poll_answer.user.id,
+            format!(
+                "Waiting for {} more player to vote...",
+                game.count_voting_pending_players().unwrap()
+            ),
+        )
+        .await?;
+    } else {
+        {
+            let state_lock = &mut bot_state.lock().unwrap();
+            let game = state_lock.game_manager.get_player_game(chat_id).unwrap();
+            game.end_trial();
+            game_snapshot = Some(game.clone());
+        }
+        let game = game_snapshot.unwrap();
+        match game.phase {
+            GamePhase::Night { .. } => {
+                start_night(chat_id, bot, bot_state).await;
+            }
+            GamePhase::Trial { .. } => {
+                start_trial(chat_id, bot, bot_state).await;
+            }
+            GamePhase::Voting { .. } => {
+                start_voting(chat_id, bot, bot_state).await;
+            }
+        }
+    }
+
+    Ok(())
 }
