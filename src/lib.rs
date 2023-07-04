@@ -9,6 +9,7 @@ use crate::handlers::new_async_bot_state;
 mod handlers;
 mod lobby_manager;
 mod game_manager;
+mod game;
 
 pub async fn start_mafia_bot() -> Result<(), Box<dyn Error>> {
     pretty_env_logger::init();

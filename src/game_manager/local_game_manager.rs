@@ -1,4 +1,5 @@
-use super::{Game, GameManager};
+use super::GameManager;
+use crate::game::Game;
 use rand::Rng;
 use std::collections::HashMap;
 use teloxide::types::ChatId;

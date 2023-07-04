@@ -1,24 +1,17 @@
-use super::AsyncBotState;
-use crate::game_manager::{Action, Game, GameManager, GamePhase, Role, Verdict};
-use std::{collections::HashMap, ops::Deref, sync::Arc};
+use std::collections::HashMap;
 use teloxide::{
     dispatching::UpdateFilterExt,
     prelude::*,
-    types::{Chat, InlineKeyboardButton, InlineKeyboardMarkup, Poll},
+    types::{InlineKeyboardButton, InlineKeyboardMarkup},
     RequestError,
 };
 use tokio::task::JoinSet;
 
-/*
-1. Check player is in a game
-2. Check the state of the game (time of day)
-3. Check the player's role
- */
-
-async fn gg_rip(bot: Bot, q: CallbackQuery) -> Result<(), RequestError> {
-    bot.send_message(q.from.id, "GG RIP").await?;
-    Ok(())
-}
+use super::AsyncBotState;
+use crate::{
+    game::{game_phase::*, player::*, Game},
+    game_manager::GameManager,
+};
 
 pub fn get_game_handler() -> Handler<
     'static,
@@ -45,7 +38,6 @@ pub fn get_game_handler() -> Handler<
                 .endpoint(handle_night),
             ),
         )
-        .branch(Update::filter_callback_query().endpoint(gg_rip))
         .branch(
             Update::filter_poll_answer()
                 .filter(|bot_state: AsyncBotState, poll_answer: PollAnswer| {
@@ -77,7 +69,7 @@ pub fn get_game_handler() -> Handler<
         )
 }
 
-async fn no_response_handler(_bot_state: AsyncBotState, _bot: Bot) -> Result<(), RequestError> {
+async fn no_response_handler() -> Result<(), RequestError> {
     Ok(())
 }
 
