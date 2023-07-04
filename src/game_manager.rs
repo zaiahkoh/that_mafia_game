@@ -1,12 +1,10 @@
+use crate::lobby_manager::Lobby;
+use rand::{seq::SliceRandom, thread_rng};
 use std::{
     collections::{HashMap, HashSet},
     fmt,
 };
-
-use rand::{seq::SliceRandom, thread_rng};
 use teloxide::types::{ChatId, MessageId};
-
-use crate::lobby_manager::Lobby;
 
 #[derive(Copy, Clone, Debug)]
 pub enum Role {

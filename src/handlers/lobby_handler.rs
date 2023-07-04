@@ -44,7 +44,7 @@ async fn lobby_handler(
     msg: Message,
     cmd: LobbyCommand,
 ) -> Result<(), teloxide::RequestError> {
-    let mut o_game: Option<Game> = None;
+    let mut game_opt: Option<Game> = None;
     let text = match cmd {
         LobbyCommand::Help => LobbyCommand::descriptions().to_string(),
         LobbyCommand::Players => {
@@ -84,20 +84,26 @@ async fn lobby_handler(
         LobbyCommand::Start => {
             let mut state_lock = bot_state.lock().unwrap();
             let lobby_manager = &mut state_lock.lobby_manager;
-            // let lobby_manager = &mut bot_state.lock().unwrap().lobby_manager;
-            if let Some(lobby) = lobby_manager.get_chats_lobby(msg.chat.id) {
-                let game = Game::from_lobby(lobby);
-                lobby_manager.close_lobby(lobby.lobby_id);
-                o_game = Some(game.clone());
-                state_lock.game_manager.add_game(game);
-            }
 
-            format!("Started lobby")
+            if let Some(lobby) = lobby_manager.get_chats_lobby(msg.chat.id) {
+                if lobby.players.len() >= 3 {
+                    let game = Game::from_lobby(lobby);
+                    lobby_manager.close_lobby(lobby.lobby_id);
+                    game_opt = Some(game.clone());
+                    state_lock.game_manager.add_game(game);
+
+                    format!("Started lobby")
+                } else {
+                    format!("Cannot start game: Need 3 or more players")
+                }
+            } else {
+                format!("Internal error: failed to find lobby to start")
+            }
         }
     };
 
     bot.send_message(msg.chat.id, text).await?;
-    if let Some(game) = o_game {
+    if let Some(_) = game_opt {
         start_night(msg.chat.id, bot, bot_state).await;
     }
 
