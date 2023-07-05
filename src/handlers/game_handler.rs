@@ -19,52 +19,54 @@ pub fn get_game_handler() -> Handler<
     Result<(), teloxide::RequestError>,
     teloxide::dispatching::DpHandlerDescription,
 > {
+    let is_night_action = |q: CallbackQuery, bot_state: AsyncBotState| {
+        matches!(
+            bot_state
+                .lock()
+                .unwrap()
+                .game_manager
+                .get_player_game(q.from.id.into()),
+            Some(Game {
+                phase: GamePhase::Night { .. },
+                ..
+            })
+        )
+    };
+    let is_vote = |bot_state: AsyncBotState, poll_answer: PollAnswer| {
+        matches!(
+            bot_state
+                .lock()
+                .unwrap()
+                .game_manager
+                .get_player_game(poll_answer.user.id.into()),
+            Some(Game {
+                phase: GamePhase::Voting { .. },
+                ..
+            })
+        )
+    };
+    let is_in_game = |msg: Message, bot_state: AsyncBotState| {
+        bot_state
+            .lock()
+            .unwrap()
+            .game_manager
+            .get_player_game(msg.chat.id)
+            .is_some()
+    };
+
     dptree::entry()
         .branch(
-            Update::filter_callback_query().branch(
-                dptree::filter(|q: CallbackQuery, bot_state: AsyncBotState| {
-                    matches!(
-                        bot_state
-                            .lock()
-                            .unwrap()
-                            .game_manager
-                            .get_player_game(q.from.id.into()),
-                        Some(Game {
-                            phase: GamePhase::Night { .. },
-                            ..
-                        })
-                    )
-                })
-                .endpoint(handle_night),
-            ),
+            Update::filter_callback_query()
+                .branch(dptree::filter(is_night_action).endpoint(handle_night)),
         )
         .branch(
             Update::filter_poll_answer()
-                .filter(|bot_state: AsyncBotState, poll_answer: PollAnswer| {
-                    matches!(
-                        bot_state
-                            .lock()
-                            .unwrap()
-                            .game_manager
-                            .get_player_game(poll_answer.user.id.into()),
-                        Some(Game {
-                            phase: GamePhase::Voting { .. },
-                            ..
-                        })
-                    )
-                })
+                .filter(is_vote)
                 .endpoint(handle_vote),
         )
         .branch(
             Update::filter_message()
-                .filter(|msg: Message, bot_state: AsyncBotState| {
-                    bot_state
-                        .lock()
-                        .unwrap()
-                        .game_manager
-                        .get_player_game(msg.chat.id)
-                        .is_some()
-                })
+                .filter(is_in_game)
                 .endpoint(no_response_handler),
         )
 }
