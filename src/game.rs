@@ -1,11 +1,9 @@
-use std::collections::{HashMap, HashSet};
-
-use rand::{seq::SliceRandom, thread_rng};
-use teloxide::types::{ChatId, MessageId};
-
 use crate::lobby_manager::Lobby;
 use game_phase::*;
 use player::*;
+use rand::{seq::SliceRandom, thread_rng};
+use std::collections::{HashMap, HashSet};
+use teloxide::types::{ChatId, MessageId};
 
 pub mod game_phase;
 pub mod player;

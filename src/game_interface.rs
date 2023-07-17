@@ -1,11 +1,9 @@
-use std::collections::HashMap;
-
-use teloxide::types::{ChatId, MessageId};
-
 use crate::{
     game::game_phase::{Action, GamePhase},
     lobby_manager::Lobby,
 };
+use std::collections::HashMap;
+use teloxide::types::{ChatId, MessageId};
 
 pub struct Player {
     chat_id: ChatId,
@@ -46,5 +44,6 @@ pub trait Game {
     /// Panics if the game is not in GamePhase::Trial
     fn get_jury(&self) -> dyn Iterator<Item = Player>;
 
-    
+    /// Panics if the game is not in GamePhase::Trial
+    fn add_verdict(&mut self);
 }

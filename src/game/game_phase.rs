@@ -27,7 +27,6 @@ pub enum Action {
 }
 
 pub const VOTE_OPTION_NOBODY: ChatId = ChatId(-1);
-pub const VOTE_OPTION_ABSTAIN: ChatId = ChatId(-2);
 
 #[derive(Clone, Copy)]
 pub enum Verdict {
