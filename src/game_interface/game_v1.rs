@@ -20,7 +20,7 @@ impl Game for GameV1 {
         todo!()
     }
 
-    fn get_players(&mut self) -> slice::IterMut<Player> {
+    fn get_players(&self) -> slice::Iter<Player> {
         todo!()
     }
 

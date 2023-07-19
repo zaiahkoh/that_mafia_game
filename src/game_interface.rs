@@ -4,8 +4,8 @@ use teloxide::types::{ChatId, MessageId};
 
 #[derive(Clone)]
 pub struct Player {
-    chat_id: ChatId,
-    username: String,
+    pub chat_id: ChatId,
+    pub username: String,
 }
 
 #[derive(Clone)]
@@ -52,12 +52,13 @@ impl fmt::Display for Verdict {
     }
 }
 
-pub trait Game: Clone {
+pub trait Game: Send + Sync {
+    /// Creates a Game instace from a lobby
     fn from_lobby(lobby: &Lobby) -> Self
     where
         Self: Sized;
 
-    fn get_players(&mut self) -> slice::IterMut<Player>;
+    fn get_players(&self) -> slice::Iter<Player>;
 
     fn get_phase(&self) -> GamePhase;
 
