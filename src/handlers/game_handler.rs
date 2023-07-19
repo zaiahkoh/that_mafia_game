@@ -9,42 +9,63 @@ use tokio::task::JoinSet;
 
 use super::AsyncBotState;
 use crate::{
-    game::{game_phase::*, player::*, Game},
+    game::{game_phase::*, player::*},
+    game_interface::Game,
     game_manager::GameManager,
 };
 
-pub fn get_game_handler() -> Handler<
+pub fn get_game_handler<G: Game>() -> Handler<
     'static,
     DependencyMap,
     Result<(), teloxide::RequestError>,
     teloxide::dispatching::DpHandlerDescription,
 > {
     let is_night_action = |q: CallbackQuery, bot_state: AsyncBotState| {
-        matches!(
-            bot_state
-                .lock()
-                .unwrap()
-                .game_manager
-                .get_player_game(q.from.id.into()),
-            Some(Game {
-                phase: GamePhase::Night { .. },
-                ..
-            })
-        )
+        let opt = bot_state
+            .lock()
+            .unwrap()
+            .game_manager
+            .get_player_game(q.from.id.into());
+
+        if let Some(game) = opt {
+            matches!(game.get_phase(), GamePhase::Night { .. })
+        } else {
+            false
+        }
     };
-    let is_vote = |bot_state: AsyncBotState, poll_answer: PollAnswer| {
-        matches!(
-            bot_state
-                .lock()
-                .unwrap()
-                .game_manager
-                .get_player_game(poll_answer.user.id.into()),
-            Some(Game {
-                phase: GamePhase::Voting { .. },
-                ..
-            })
-        )
+    let is_voting_vote = |bot_state: AsyncBotState, poll_answer: PollAnswer| {
+        let opt = bot_state
+            .lock()
+            .unwrap()
+            .game_manager
+            .get_player_game(poll_answer.user.id.into());
+
+        if let Some(game) = opt {
+            matches!(game.get_phase(), GamePhase::Voting { .. })
+        } else {
+            false
+        }
     };
+    let is_trial_verdict = |bot_state: AsyncBotState, verdict: Verdict| {
+        let opt = bot_state
+            .bot_state
+            .lock()
+            .unwrap()
+            .game_manager
+            .get_player_game(verdict.user.id.into());
+
+        matches!(
+            opt.unwrap_or_default().get_phase(),
+            GamePhase::Verdict { .. }
+        );
+
+        if let Some(game) = opt {
+            matches!(game.get_phase(), GamePhase::Verdict { .. })
+        } else {
+            false
+        }
+    };
+
     let is_in_game = |msg: Message, bot_state: AsyncBotState| {
         bot_state
             .lock()
@@ -61,8 +82,13 @@ pub fn get_game_handler() -> Handler<
         )
         .branch(
             Update::filter_poll_answer()
-                .filter(is_vote)
+                .filter(is_voting_vote)
                 .endpoint(handle_vote),
+        )
+        .branch(
+            Update::filter_poll_answer()
+                .filter(is_trial_verdict)
+                .endpoint(handle_trial),
         )
         .branch(
             Update::filter_message()
@@ -75,7 +101,7 @@ async fn no_response_handler() -> Result<(), RequestError> {
     Ok(())
 }
 
-fn make_player_keyboard(game: &Game) -> InlineKeyboardMarkup {
+fn make_player_keyboard<G: Game>(game: G) -> InlineKeyboardMarkup {
     let mut keyboard = vec![];
 
     for player in game.players.iter() {

@@ -1,18 +1,21 @@
 use teloxide::types::ChatId;
 
-use crate::game::Game;
+use crate::game_interface::Game;
 
-pub trait GameManager {
-    // Gets the instantaneous lobby, if present, of a chat user.
-    fn get_player_game(&mut self, chat_id: ChatId) -> Option<&mut Game>;
+pub trait GameManager<G>
+where
+    G: Game,
+{
+    /// Returns a mutable reference to the chat_id's game, if present
+    fn get_player_game(&mut self, chat_id: ChatId) -> Option<&mut G>;
 
     // Adds game to the map
-    fn add_game(&mut self, game: Game);
+    fn add_game(&mut self, game: G);
 
-    fn update_game(&mut self, game: Game, chat_id: ChatId);
+    fn update_game(&mut self, game: G, chat_id: ChatId);
 
     // If the host quits, then a remaining player should be randomly chosen to be the new host
-    fn quit_game(&mut self, chat_id: ChatId) -> Result<&Game, &'static str>;
+    fn quit_game(&mut self, chat_id: ChatId) -> Result<&mut G, &'static str>;
 }
 
 pub mod local_game_manager;

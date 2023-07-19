@@ -1,19 +1,23 @@
 use super::GameManager;
-use crate::game::Game;
+use crate::game_interface::Game;
 use rand::Rng;
 use std::collections::HashMap;
 use teloxide::types::ChatId;
+// use crate::game_interface::game_v1::GameV1;
 
 #[derive(Eq, Hash, PartialEq, Copy, Clone, derive_more::Display)]
 pub struct GameId(pub i32);
 
-pub struct LocalGameManager {
-    games: HashMap<GameId, Game>,
+pub struct LocalGameManager<G>
+where
+    G: Game,
+{
+    games: HashMap<GameId, G>,
     player_map: HashMap<ChatId, GameId>,
 }
 
-impl LocalGameManager {
-    pub fn new() -> LocalGameManager {
+impl<G: Game> LocalGameManager<G> {
+    pub fn new() -> LocalGameManager<G> {
         LocalGameManager {
             games: HashMap::new(),
             player_map: HashMap::new(),
@@ -21,13 +25,16 @@ impl LocalGameManager {
     }
 }
 
-impl GameManager for LocalGameManager {
-    fn get_player_game(&mut self, chat_id: ChatId) -> Option<&mut Game> {
+impl<G: Game> GameManager<G> for LocalGameManager<G> {
+    fn get_player_game(&mut self, chat_id: ChatId) -> Option<&mut G> {
         let game_id = self.player_map.get(&chat_id)?;
         self.games.get_mut(game_id)
     }
 
-    fn add_game(&mut self, game: Game) {
+    fn add_game(&mut self, game: G)
+    where
+        G: Game,
+    {
         let mut rng = rand::thread_rng();
         let mut game_id = GameId(rng.gen_range(1_000..10_000));
         while let Some(_) = self.games.get(&game_id) {
@@ -41,12 +48,12 @@ impl GameManager for LocalGameManager {
         self.games.insert(game_id, game);
     }
 
-    fn update_game(&mut self, game: Game, chat_id: ChatId) {
+    fn update_game(&mut self, game: G, chat_id: ChatId) {
         let game_id = self.player_map.get(&chat_id);
         self.games.insert(*game_id.unwrap(), game);
     }
 
-    fn quit_game(&mut self, chat_id: ChatId) -> Result<&Game, &'static str> {
+    fn quit_game(&mut self, chat_id: ChatId) -> Result<&mut G, &'static str> {
         match self.player_map.get(&chat_id) {
             Some(game_id) => {
                 let game = self.games.get_mut(game_id).unwrap();
