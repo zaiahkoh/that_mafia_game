@@ -2,6 +2,7 @@ use teloxide::{prelude::*, utils::command::BotCommands};
 
 use super::{game_handler::start_night, AsyncBotState};
 use crate::game_interface::Game;
+use crate::game_interface::game_v1::GameV1;
 use crate::{game_manager::GameManager, lobby_manager::LobbyManager};
 
 pub fn get_lobby_handler() -> Handler<
@@ -36,13 +37,13 @@ enum LobbyCommand {
     Start,
 }
 
-async fn lobby_handler<G : Game>(
+async fn lobby_handler(
     bot_state: AsyncBotState,
     bot: Bot,
     msg: Message,
     cmd: LobbyCommand,
 ) -> Result<(), teloxide::RequestError> {
-    let mut game_opt: Option<G> = None;
+    let mut game_opt: Option<Box<dyn Game>> = None;
     let text = match cmd {
         LobbyCommand::Help => LobbyCommand::descriptions().to_string(),
         LobbyCommand::Players => {
@@ -85,10 +86,10 @@ async fn lobby_handler<G : Game>(
 
             if let Some(lobby) = lobby_manager.get_chats_lobby(msg.chat.id) {
                 if lobby.players.len() >= 3 {
-                    let game = G::from_lobby(lobby);
+                    let game = GameV1::from_lobby(lobby);
                     lobby_manager.close_lobby(lobby.lobby_id);
-                    game_opt = Some(game.clone());
-                    state_lock.game_manager.add_game(game);
+                    game_opt = Some(game.snapshot());
+                    state_lock.game_manager.add_game(Box::new(game));
 
                     format!("Started lobby")
                 } else {

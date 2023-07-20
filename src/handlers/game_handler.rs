@@ -9,12 +9,11 @@ use tokio::task::JoinSet;
 
 use super::AsyncBotState;
 use crate::{
-    game::{game_phase::*, player::*},
-    game_interface::Game,
+    game_interface::{Game, *},
     game_manager::GameManager,
 };
 
-pub fn get_game_handler<G: Game>() -> Handler<
+pub fn get_game_handler() -> Handler<
     'static,
     DependencyMap,
     Result<(), teloxide::RequestError>,
@@ -46,21 +45,17 @@ pub fn get_game_handler<G: Game>() -> Handler<
             false
         }
     };
-    let is_trial_verdict = |bot_state: AsyncBotState, verdict: Verdict| {
+    let is_trial_verdict = |bot_state: AsyncBotState, poll_answer: PollAnswer| {
         let opt = bot_state
-            .bot_state
             .lock()
             .unwrap()
             .game_manager
-            .get_player_game(verdict.user.id.into());
+            .get_player_game(poll_answer.user.id.into());
 
-        matches!(
-            opt.unwrap_or_default().get_phase(),
-            GamePhase::Verdict { .. }
-        );
+        matches!(opt.unwrap().get_phase(), GamePhase::Trial { .. });
 
         if let Some(game) = opt {
-            matches!(game.get_phase(), GamePhase::Verdict { .. })
+            matches!(game.get_phase(), GamePhase::Trial { .. })
         } else {
             false
         }
@@ -101,19 +96,17 @@ async fn no_response_handler() -> Result<(), RequestError> {
     Ok(())
 }
 
-fn make_player_keyboard<G: Game>(game: G) -> InlineKeyboardMarkup {
-    let mut keyboard = vec![];
-
-    for player in game.players.iter() {
-        let row = vec![InlineKeyboardButton::callback(
-            player.username.to_string(),
-            player.chat_id.to_string(),
-        )];
-        keyboard.push(row);
-    }
-
-    let none_option = vec![InlineKeyboardButton::callback("No target", "-1")];
-    keyboard.push(none_option);
+/// `options` should be a vector of (text: String, data: String)
+fn make_keyboard(options: Vec<(ChatId, String)>) -> InlineKeyboardMarkup {
+    let keyboard = options
+        .iter()
+        .map(|(chat_id, username)| {
+            vec![InlineKeyboardButton::callback(
+                username,
+                chat_id.to_string(),
+            )]
+        })
+        .collect::<Vec<_>>();
 
     InlineKeyboardMarkup::new(keyboard)
 }
@@ -127,47 +120,34 @@ pub async fn start_night(
     {
         let mut state_lock = bot_state.lock().unwrap();
         let game = state_lock.game_manager.get_player_game(chat_id).unwrap();
-        game_snapshot = Some(game.clone());
+        game_snapshot = Some(game.snapshot());
     }
     let game = game_snapshot.unwrap();
     let mut message_set = JoinSet::new();
 
-    // Send starting messages
-    for player in game.players.iter() {
-        let temp = bot.clone();
+    // Queue transition messages
+    for player in game.get_players() {
+        let bot_clone = bot.clone();
         let chat_id = player.chat_id;
-        let role = player.role;
-        let text = game.get_transition_message().clone();
-        message_set.spawn(async move { temp.send_message(chat_id, text).await });
+        let text = game.get_transition_message();
+        message_set.spawn(async move { bot_clone.send_message(chat_id, text).await });
     }
 
-    while let Some(join_res) = message_set.join_next().await {
-        match join_res {
-            Ok(tele_res) => {
-                if let Err(_) = tele_res {
-                    return Err("Failed to send starting message");
-                }
-            }
-            Err(_) => {
-                return Err("Internal Error: join error");
-            }
+    // Queue targetting messages
+    let night_actions = game.get_night_actions();
+    for (chat_id, (message, options)) in night_actions {
+        let bot_clone = bot.clone();
+        if options.len() > 0 {
+            let keyboard = make_keyboard(options.to_vec());
+            message_set.spawn(async move {
+                bot_clone
+                    .send_message(chat_id, message)
+                    .reply_markup(keyboard)
+                    .await
+            });
+        } else {
+            message_set.spawn(async move { bot_clone.send_message(chat_id, message).await });
         }
-    }
-
-    // Send targetting messages
-    for player in game
-        .players
-        .iter()
-        .filter(|p| matches!(p.role, Role::Mafia))
-    {
-        let temp = bot.clone();
-        let chat_id = player.chat_id;
-        let keyboard = make_player_keyboard(&game);
-        message_set.spawn(async move {
-            temp.send_message(chat_id, "You are a Mafia. Pick a kill target: ")
-                .reply_markup(keyboard)
-                .await
-        });
     }
 
     while let Some(join_res) = message_set.join_next().await {
@@ -207,12 +187,9 @@ async fn handle_night(
             .get_player_game(q.from.id.into())
             .unwrap();
 
-        game.push_night_action(Action::Kill {
-            source: source_id,
-            target: target_id,
-        });
+        game.add_night_action(source_id, target_id);
 
-        game_snapshot = Some(game.clone());
+        game_snapshot = Some(game.snapshot());
     }
 
     // Answer callback query
@@ -339,7 +316,7 @@ async fn handle_vote(
     {
         let state_lock = &mut bot_state.lock().unwrap();
         let game = state_lock.game_manager.get_player_game(chat_id).unwrap();
-        target_username_opt = Some(game.add_votes(chat_id, poll_answer.option_ids).unwrap());
+        target_username_opt = Some(game.add_vote(chat_id, poll_answer.option_ids).unwrap());
         message_id_opt = Some(game.get_voter_poll_msg_id(chat_id).unwrap());
         game_snapshot = Some(game.clone());
     }

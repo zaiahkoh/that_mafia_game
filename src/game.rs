@@ -8,7 +8,7 @@ use teloxide::types::{ChatId, MessageId};
 pub mod game_phase;
 pub mod player;
 
-/*
+
 #[derive(Clone)]
 pub struct Game {
     pub players: Vec<Player>,
@@ -459,4 +459,3 @@ impl Game {
         }
     }
 }
-*/
