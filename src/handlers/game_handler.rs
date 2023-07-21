@@ -20,11 +20,8 @@ pub fn get_game_handler() -> Handler<
     teloxide::dispatching::DpHandlerDescription,
 > {
     let is_night_action = |q: CallbackQuery, bot_state: AsyncBotState| {
-        let opt = bot_state
-            .lock()
-            .unwrap()
-            .game_manager
-            .get_player_game(q.from.id.into());
+        let mut state_lock = bot_state.lock().unwrap();
+        let opt = state_lock.game_manager.get_player_game(q.from.id.into());
 
         if let Some(game) = opt {
             matches!(game.get_phase(), GamePhase::Night { .. })
@@ -33,9 +30,8 @@ pub fn get_game_handler() -> Handler<
         }
     };
     let is_voting_vote = |bot_state: AsyncBotState, poll_answer: PollAnswer| {
-        let opt = bot_state
-            .lock()
-            .unwrap()
+        let mut state_lock = bot_state.lock().unwrap();
+        let opt = state_lock
             .game_manager
             .get_player_game(poll_answer.user.id.into());
 
@@ -46,13 +42,10 @@ pub fn get_game_handler() -> Handler<
         }
     };
     let is_trial_verdict = |bot_state: AsyncBotState, poll_answer: PollAnswer| {
-        let opt = bot_state
-            .lock()
-            .unwrap()
+        let mut state_lock = bot_state.lock().unwrap();
+        let opt = state_lock
             .game_manager
             .get_player_game(poll_answer.user.id.into());
-
-        matches!(opt.unwrap().get_phase(), GamePhase::Trial { .. });
 
         if let Some(game) = opt {
             matches!(game.get_phase(), GamePhase::Trial { .. })
@@ -193,33 +186,35 @@ async fn handle_night(
     }
 
     // Answer callback query
-    let game = game_snapshot.as_ref().unwrap();
+    let game = game_snapshot.unwrap();
     bot.answer_callback_query(q.id).await?;
     if let Some(Message { id, chat, .. }) = q.message {
-        let target_username = if target_id == NO_TARGET {
-            String::from("No target")
-        } else {
-            game.get_player(target_id).unwrap().username.clone()
-        };
-        bot.edit_message_text(chat.id, id, format!("You chose: {target_username}"))
+        let chosen_text = game
+            .get_night_actions()
+            .get(&source_id)
+            .unwrap()
+            .1
+            .iter()
+            .find(|(chat_id, _username)| *chat_id == target_id)
+            .unwrap()
+            .1
+            .clone();
+
+        bot.edit_message_text(chat.id, id, format!("You chose: {chosen_text}"))
             .await?;
     }
 
-    // Check whether to end night
-    let pending_player_count = game.count_night_pending_players().unwrap();
-    if pending_player_count == 0 {
-        {
-            let mut state_lock = bot_state.lock().unwrap();
-            let game = state_lock
-                .game_manager
-                .get_player_game(q.from.id.into())
-                .unwrap();
-            game.end_night();
-            game_snapshot = Some(game.clone());
-        }
-        let chat_id = game_snapshot.unwrap().players.first().unwrap().chat_id;
+    let phase_opt = {
+        let mut state_lock = bot_state.lock().unwrap();
+        let game = state_lock
+            .game_manager
+            .get_player_game(q.from.id.into())
+            .unwrap();
+        game.end_phase().map(|p| p.clone())
+    };
 
-        start_voting(chat_id, bot, bot_state).await;
+    if let Some(_) = phase_opt {
+        start_voting(source_id, bot, bot_state).await;
     }
 
     Ok(())
@@ -234,7 +229,7 @@ async fn start_voting(
     {
         let mut state_lock = bot_state.lock().unwrap();
         let game = state_lock.game_manager.get_player_game(host_id).unwrap();
-        game_snapshot = Some(game.clone());
+        game_snapshot = Some(game.snapshot());
     }
 
     let game = game_snapshot.unwrap();
@@ -242,12 +237,11 @@ async fn start_voting(
 
     let mut votable_usernames = game
         .get_vote_options()
-        .unwrap()
         .iter()
         .map(|x| x.1.clone())
         .collect::<Vec<_>>();
 
-    for player in game.get_voters().unwrap() {
+    for player in game.get_voters() {
         let temp = bot.clone();
         let chat_id = player.chat_id;
         let transition_message = game.get_transition_message().clone();
@@ -288,7 +282,7 @@ async fn start_voting(
         .game_manager
         .get_player_game(host_id)
         .unwrap()
-        .add_poll_id_map(poll_id_map);
+        .add_poll_msg_ids(poll_id_map);
 
     Ok(())
 }
@@ -309,57 +303,34 @@ async fn handle_vote(
 ) -> Result<(), teloxide::RequestError> {
     let chat_id = ChatId::from(poll_answer.user.id);
     let mut message_id_opt = None;
-    let mut target_username_opt = None;
-    let mut game_snapshot = None;
+    let mut phase_opt = None;
 
     // Add votes to game
     {
         let state_lock = &mut bot_state.lock().unwrap();
         let game = state_lock.game_manager.get_player_game(chat_id).unwrap();
-        target_username_opt = Some(game.add_vote(chat_id, poll_answer.option_ids).unwrap());
-        message_id_opt = Some(game.get_voter_poll_msg_id(chat_id).unwrap());
-        game_snapshot = Some(game.clone());
+        message_id_opt = game.get_poll_msg_ids().get(&chat_id).copied();
+        phase_opt = game.end_phase().map(|p| p.clone());
     }
-    let game = game_snapshot.unwrap();
 
     if let Some(message_id) = message_id_opt {
         bot.stop_poll(poll_answer.user.id, message_id).await?;
     }
 
-    bot.send_message(
-        poll_answer.user.id,
-        format!("You voted for: {:?}", target_username_opt.unwrap()),
-    )
-    .await?;
-
-    bot.send_message(
-        poll_answer.user.id,
-        format!(
-            "Waiting for {} more player to vote...",
-            game.count_voting_pending_players().unwrap()
-        ),
-    )
-    .await?;
-
-    if game.count_voting_pending_players().unwrap() == 0 {
-        {
-            let state_lock = &mut bot_state.lock().unwrap();
-            let game = state_lock.game_manager.get_player_game(chat_id).unwrap();
-            game.end_voting();
-            game_snapshot = Some(game.clone());
+    match phase_opt {
+        Some(GamePhase::Night { .. }) => {
+            start_night(chat_id, bot, bot_state).await;
         }
-        let game = game_snapshot.unwrap();
-        match game.phase {
-            GamePhase::Night { .. } => {
-                start_night(chat_id, bot, bot_state).await;
-            }
-            GamePhase::Trial { .. } => {
-                start_trial(chat_id, bot, bot_state).await;
-            }
-            GamePhase::Voting { .. } => {
-                start_voting(chat_id, bot, bot_state).await;
-            }
+        Some(GamePhase::Trial { .. }) => {
+            start_trial(chat_id, bot, bot_state).await;
         }
+        Some(GamePhase::Voting { .. }) => {
+            start_voting(chat_id, bot, bot_state).await;
+        }
+        Some(GamePhase::Ending) => {
+            start_ending(chat_id, bot, bot_state).await;
+        }
+        None => {}
     }
 
     Ok(())
@@ -376,12 +347,12 @@ async fn start_trial(
     {
         let mut state_lock = bot_state.lock().unwrap();
         let game = state_lock.game_manager.get_player_game(host_id).unwrap();
-        game_snapshot = Some(game.clone());
+        game_snapshot = Some(game.snapshot());
     }
     let game = game_snapshot.unwrap();
 
     let mut message_set = JoinSet::new();
-    for player in game.get_voters().unwrap() {
+    for player in game.get_voters() {
         let temp = bot.clone();
         let chat_id = player.chat_id;
         let transition_message = game.get_transition_message().clone();
@@ -423,7 +394,7 @@ async fn start_trial(
         .game_manager
         .get_player_game(host_id)
         .unwrap()
-        .add_poll_id_map(poll_id_map);
+        .add_poll_msg_ids(poll_id_map);
 
     Ok(())
 }
@@ -435,66 +406,82 @@ async fn handle_trial(
 ) -> Result<(), teloxide::RequestError> {
     let chat_id = ChatId::from(poll_answer.user.id);
     let mut message_id_opt = None;
-    let mut game_snapshot = None;
-    let mut choice_opt = Err("");
+    let mut phase_opt = None;
 
     assert_eq!(
         poll_answer.option_ids.len(),
         1,
         "Internal error: trial poll options_ids.len != 1"
     );
-    let verdict = Game::parse_verdict_option(poll_answer.option_ids[0]).unwrap();
+    let chosen_id = poll_answer.option_ids.first().unwrap();
 
-    // Add jury to game
+    // Add verdict to game
     {
         let state_lock = &mut bot_state.lock().unwrap();
         let game = state_lock.game_manager.get_player_game(chat_id).unwrap();
-
-        choice_opt = game.add_jury(chat_id, verdict);
-        message_id_opt = Some(game.get_voter_poll_msg_id(chat_id).unwrap());
-        game_snapshot = Some(game.clone());
+        game.add_verdict(chat_id, *chosen_id);
+        message_id_opt = game.get_poll_msg_ids().get(&chat_id).copied();
+        phase_opt = game.end_phase().map(|p| p.clone());
     }
 
-    let game = game_snapshot.unwrap();
-
+    // Stop poll
     if let Some(message_id) = message_id_opt {
         bot.stop_poll(poll_answer.user.id, message_id).await?;
     }
 
-    bot.send_message(
-        poll_answer.user.id,
-        format!("You voted: {}", choice_opt.unwrap()),
-    )
-    .await?;
-
-    let pending_player_count = game.count_trial_pending_players().unwrap();
-
-    if pending_player_count > 0 {
-        bot.send_message(
-            poll_answer.user.id,
-            format!(
-                "Waiting for {} more player to vote...",
-                game.count_voting_pending_players().unwrap()
-            ),
-        )
-        .await?;
-    } else {
-        {
-            let state_lock = &mut bot_state.lock().unwrap();
-            let game = state_lock.game_manager.get_player_game(chat_id).unwrap();
-            game.end_trial();
-            game_snapshot = Some(game.clone());
+    // Start next phase
+    match phase_opt {
+        Some(GamePhase::Night { .. }) => {
+            start_night(chat_id, bot, bot_state).await;
         }
-        let game = game_snapshot.unwrap();
-        match game.phase {
-            GamePhase::Night { .. } => {
-                start_night(chat_id, bot, bot_state).await;
+        Some(GamePhase::Trial { .. }) => {
+            start_trial(chat_id, bot, bot_state).await;
+        }
+        Some(GamePhase::Voting { .. }) => {
+            start_voting(chat_id, bot, bot_state).await;
+        }
+        Some(GamePhase::Ending) => {
+            start_ending(chat_id, bot, bot_state).await;
+        }
+        None => {}
+    }
+
+    Ok(())
+}
+
+async fn start_ending(
+    host_id: ChatId,
+    bot: Bot,
+    bot_state: AsyncBotState,
+) -> Result<(), &'static str> {
+    let mut game_snapshot = None;
+    {
+        let mut state_lock = bot_state.lock().unwrap();
+        let game = state_lock.game_manager.get_player_game(host_id).unwrap();
+        game_snapshot = Some(game.snapshot());
+    }
+    let game = game_snapshot.unwrap();
+
+    let mut message_set = JoinSet::new();
+
+    let ending_message = game.get_transition_message();
+    for player in game.get_players() {
+        let bot_clone = bot.clone();
+        let chat_id = player.chat_id;
+        let text = ending_message.clone();
+
+        message_set.spawn(async move { bot_clone.send_message(chat_id, text).await });
+    }
+
+    while let Some(join_res) = message_set.join_next().await {
+        match join_res {
+            Ok(tele_res) => {
+                if let Err(_) = tele_res {
+                    return Err("Failed to send targetting message");
+                }
             }
-            GamePhase::Trial { .. } => {
-                start_trial(chat_id, bot, bot_state).await;
-            }
-            GamePhase::Voting { .. } => {
-                start_voting(chat_id, bot, bot_state).await;
+            Err(_) => {
+                return Err("Internal Error: join error");
             }
         }
     }

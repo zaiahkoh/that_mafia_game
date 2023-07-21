@@ -4,7 +4,7 @@ use crate::game_interface::Game;
 
 pub trait GameManager: Send + Sync {
     /// Returns a mutable reference to the chat_id's game, if present
-    fn get_player_game(&mut self, chat_id: ChatId) -> Option<&mut dyn Game>;
+    fn get_player_game(&mut self, chat_id: ChatId) -> Option<&mut Box<dyn Game>>;
 
     // Adds game to the map
     fn add_game(&mut self, game: Box<dyn Game>);

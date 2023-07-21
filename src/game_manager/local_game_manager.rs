@@ -23,9 +23,9 @@ impl LocalGameManager {
 }
 
 impl GameManager for LocalGameManager {
-    fn get_player_game(&mut self, chat_id: ChatId) -> Option<&mut dyn Game> {
+    fn get_player_game(&mut self, chat_id: ChatId) -> Option<&mut Box<dyn Game>> {
         let game_id = self.player_map.get(&chat_id)?;
-        self.games.get_mut(game_id).map(|g| g.as_mut())
+        self.games.get_mut(game_id)
     }
 
     fn add_game(&mut self, game: Box<dyn Game>) {

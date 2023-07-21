@@ -1,5 +1,5 @@
 use crate::lobby_manager::Lobby;
-use std::{collections::HashMap, fmt, slice};
+use std::{collections::HashMap, fmt};
 use teloxide::types::{ChatId, MessageId};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -30,10 +30,11 @@ pub enum GamePhase {
         poll_id_map: HashMap<ChatId, MessageId>,
         verdicts: HashMap<ChatId, Verdict>,
     },
+    Ending,
 }
 
 pub const NOBODY_CHAT_ID: ChatId = ChatId(-1);
-pub const NOBODY_USERNAME: String = String::from("Nobody");
+pub const NOBODY_USERNAME: &str = "Nobody";
 
 #[derive(Clone)]
 pub enum Action {
@@ -67,11 +68,12 @@ pub trait Game: Send + Sync {
 
     fn snapshot(&self) -> Box<dyn Game>;
 
-    fn get_players(&self) -> slice::Iter<Player>;
+    fn get_players(&self) -> Vec<&Player>;
 
     fn get_phase(&self) -> &GamePhase;
 
-    /// Attempts to end the phase. Returns Some(GamePhase) if the phase ended
+    /// Attempts to end the phase. Returns Some(GamePhase) if the phase ended. \
+    /// `GamePhase::Night` should always return `None`
     fn end_phase(&mut self) -> Option<&GamePhase>;
 
     /// Returns the most recent transition message
@@ -88,28 +90,31 @@ pub trait Game: Send + Sync {
 
     /// Panics if the game is not in GamePhase::Voting.
     /// Returns a iterator over ChatIds and the corresponding display names.
-    fn get_vote_options(&self) -> slice::Iter<(ChatId, String)>;
+    fn get_vote_options(&self) -> Vec<(ChatId, String)>;
 
     /// Panics if the game is not in GamePhase::Voting
-    fn get_voters(&self) -> slice::Iter<Player>;
-
-    /// Panics if the game is not in GamePhase::Voting. The poll_msg_ids HashMap should map the
-    /// voter's chat id to the message id of the poll.
-    fn add_vote_msg_ids(&mut self, poll_msg_ids: HashMap<ChatId, MessageId>);
+    fn get_voters(&self) -> Vec<&Player>;
 
     /// Panics if the game is not in GamePhase::Voting. The chosen vector should contain the index of the options
     /// as they appear in `get_vote_options`.
     fn add_vote(&mut self, voter_id: ChatId, choices: Vec<i32>);
 
     /// Panics if the game is not in GamePhase::Trial
-    fn get_verdict_options(&self) -> slice::Iter<Verdict>;
+    fn get_verdict_options(&self) -> Vec<Verdict>;
 
     /// Panics if the game is not in GamePhase::Trial
-    fn get_jury(&self) -> slice::Iter<Player>;
+    fn get_jury(&self) -> Vec<&Player>;
 
     /// Panics if the game is not in GamePhase::Trial.\
     /// The chosen index should correspond to the entry in `get_verdict_options`
     fn add_verdict(&mut self, juror_id: ChatId, chosen: i32);
+
+    /// Panics if the game is not in GamePhase::Voting or GamePhase::Trial.
+    /// The poll_msg_ids HashMap should map the voter's chat id to the message id of the poll.
+    fn add_poll_msg_ids(&mut self, poll_msg_ids: HashMap<ChatId, MessageId>);
+
+    /// Panics if the game is not in GamePhase::Voting or GamePhase::Trial.
+    fn get_poll_msg_ids(&self) -> HashMap<ChatId, MessageId>;
 }
 
 pub mod game_v1;

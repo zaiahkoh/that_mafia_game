@@ -3,6 +3,7 @@ use teloxide::types::{ChatId, MessageId};
 use crate::game_interface::{Game, GamePhase, Player};
 use std::{
     collections::{HashMap, HashSet},
+    fmt::format,
     slice,
 };
 
@@ -40,14 +41,14 @@ impl GameV1 {
     }
 
     /// Attempts to end the night, returning the new, current phase if successful
-    fn end_night(&self) -> Option<&GamePhase> {
-        if let GamePhase::Night { actions, .. } = &self.phase {
-            if !self.should_end_night() {
-                return None;
-            }
+    fn end_night(&mut self) -> Option<&GamePhase> {
+        if !self.should_end_night() {
+            return None;
+        }
 
-            self.previous = Some(Box::new(self.clone()));
+        self.previous = Some(Box::new(self.clone()));
 
+        if let GamePhase::Night { actions, .. } = &mut self.phase {
             // Resolve actions
             let mut killed_usernames = Vec::new();
             for a in actions {
@@ -63,14 +64,24 @@ impl GameV1 {
             }
 
             // Update state
-            self.transition_message = if killed_usernames.len() > 0 {
-                format!("{} died last night", killed_usernames.join(", "))
+            (self.transition_message, self.phase) = if let Some(winning_faction) = self.get_winner()
+            {
+                (
+                    format!("{} won the game!", winning_faction),
+                    GamePhase::Ending,
+                )
             } else {
-                format!("Nobody died last night")
-            };
-            self.phase = GamePhase::Voting {
-                votes: HashMap::new(),
-                poll_id_map: HashMap::new(),
+                (
+                    if killed_usernames.len() > 0 {
+                        format!("{} died last night", killed_usernames.join(", "))
+                    } else {
+                        format!("Nobody died last night")
+                    },
+                    GamePhase::Voting {
+                        votes: HashMap::new(),
+                        poll_id_map: HashMap::new(),
+                    },
+                )
             };
 
             Some(&self.phase)
@@ -91,7 +102,9 @@ impl GameV1 {
         }
     }
 
-    fn end_voting(&self) -> Option<&GamePhase> {
+    fn end_voting(&mut self) -> Option<&GamePhase> {
+        self.previous = Some(Box::new(self.clone()));
+
         if let GamePhase::Voting { votes, .. } = &self.phase {
             if !self.should_end_voting() {
                 return None;
@@ -115,8 +128,6 @@ impl GameV1 {
                 .map(|(k, _v)| k);
             let tied_count = tied_targets.count();
             let is_voting_stalemate = self.is_voting_stalemate();
-
-            self.previous = Some(Box::new(self.clone()));
 
             (self.phase, self.transition_message) = if is_voting_stalemate {
                 (
@@ -179,16 +190,16 @@ impl GameV1 {
     }
 
     fn end_trial(&mut self) -> Option<&GamePhase> {
-        if let GamePhase::Trial {
-            defendant_id: defendant,
-            poll_id_map,
-            verdicts,
-        } = &mut self.phase
-        {
-            if !self.should_end_trial() {
-                return None;
-            }
+        if !self.should_end_trial() {
+            return None;
+        }
 
+        let (defendant_id, defendant_name, guilties, innocents) = if let GamePhase::Trial {
+            defendant_id,
+            verdicts,
+            ..
+        } = &self.phase
+        {
             let guilties = verdicts
                 .values()
                 .filter(|v| matches!(v, Verdict::Guilty))
@@ -198,31 +209,37 @@ impl GameV1 {
                 .filter(|v| matches!(v, Verdict::Innocent))
                 .count();
 
-            let username = self.get_player(*defendant).unwrap().username.clone();
+            let username = self.get_player(*defendant_id).unwrap().username.clone();
 
-            self.transition_message = if guilties >= innocents {
-                let victim = self
-                    .players
-                    .iter_mut()
-                    .find(|p| p.chat_id == *defendant)
-                    .unwrap();
-                victim.is_alive = false;
-
-                format!(
-                    "By a vote of {guilties} guilty to {innocents} innocent, {} was lynched",
-                    username
-                )
-            } else {
-                format!(
-                    "By a vote of {innocents} innocent to {guilties} guilty, {} was released",
-                    username
-                )
-            };
-
-            Some(&self.phase)
+            (defendant_id, username, guilties, innocents)
         } else {
             panic!("end_trial called when not in GamePhase::Trial")
-        }
+        };
+
+        self.transition_message = if guilties >= innocents {
+            let victim = self
+                .players
+                .iter_mut()
+                .find(|p| p.chat_id == *defendant_id)
+                .unwrap();
+            victim.is_alive = false;
+
+            format!(
+                "By a vote of {guilties} guilty to {innocents} innocent, {} was lynched",
+                defendant_name
+            )
+        } else {
+            format!(
+                "By a vote of {innocents} innocent to {guilties} guilty, {} was released",
+                defendant_name
+            )
+        };
+
+        self.phase = GamePhase::Night {
+            actions: Vec::new(),
+        };
+
+        Some(&self.phase)
     }
 
     fn is_voting_stalemate(&self) -> bool {
@@ -262,6 +279,28 @@ impl GameV1 {
         false
     }
 
+    /// Returns None if there are no winners, and Some(String) if there is a winner,
+    /// where String is the faction of the winner
+    fn get_winner(&self) -> Option<String> {
+        let mafia_count = self
+            .players
+            .iter()
+            .filter(|p| matches!(p.role, Role::Mafia))
+            .count();
+        let civilian_count = self
+            .players
+            .iter()
+            .filter(|p| !matches!(p.role, Role::Civilian))
+            .count();
+        if mafia_count == 0 {
+            Some(String::from("Civilians"))
+        } else if mafia_count >= civilian_count {
+            Some(String::from("Mafia"))
+        } else {
+            None
+        }
+    }
+
     fn get_player(&self, chat_id: ChatId) -> Option<&Player> {
         self.players.iter().find(|p| p.chat_id == chat_id)
     }
@@ -286,8 +325,8 @@ impl Game for GameV1 {
         Box::new(self.clone())
     }
 
-    fn get_players(&self) -> slice::Iter<Player> {
-        self.players.iter()
+    fn get_players(&self) -> Vec<&Player> {
+        self.players.iter().collect::<Vec<_>>()
     }
 
     fn get_phase(&self) -> &GamePhase {
@@ -299,6 +338,7 @@ impl Game for GameV1 {
             GamePhase::Night { .. } => self.end_night(),
             GamePhase::Voting { .. } => self.end_voting(),
             GamePhase::Trial { .. } => self.end_trial(),
+            _ => None,
         }
     }
 
@@ -314,14 +354,14 @@ impl Game for GameV1 {
             }
             let (text, targets) = match p.role {
                 Role::Mafia => {
-                    let base_options = vec![(NOBODY_CHAT_ID, NOBODY_USERNAME)].iter().map(|p| *p);
-                    let options = self
+                    let mut options: Vec<(ChatId, String)> = self
                         .players
                         .iter()
                         .filter(|p| p.is_alive && p.role != Role::Mafia)
                         .map(|p| (p.chat_id, p.username.clone()))
-                        .chain(base_options)
                         .collect();
+
+                    options.push((NOBODY_CHAT_ID, NOBODY_USERNAME.to_string()));
                     (
                         String::from("You are a Mafia. Pick a victim to kil:"),
                         options,
@@ -336,116 +376,131 @@ impl Game for GameV1 {
     }
 
     fn add_night_action(&mut self, actor_id: ChatId, target_id: ChatId) {
-        if let GamePhase::Night { actions, .. } = &mut self.phase {
-            let is_valid_target = self
-                .get_night_actions()
-                .get(&actor_id)
-                .unwrap()
-                .1
-                .iter()
-                .find(|(chat_id, _)| *chat_id == target_id)
-                .is_some();
-            if !is_valid_target {
-                panic!("add_night_action called with illegal target_id");
-            }
+        let options = self.get_night_actions().get(&actor_id).unwrap().1.clone();
+        let is_valid_target = options
+            .iter()
+            .find(|(chat_id, _)| *chat_id == target_id)
+            .is_some();
+        assert!(
+            is_valid_target,
+            "add_night_action called with illegal target_id"
+        );
 
-            let actor_role = self.get_player(actor_id).unwrap().role;
-            match actor_role {
-                Role::Mafia => actions.push(Action::Kill {
-                    source: actor_id,
-                    target: target_id,
-                }),
-                _ => {}
+        let actor_role = self.get_player(actor_id).unwrap().role;
+        let action_opt = match actor_role {
+            Role::Mafia => Some(Action::Kill {
+                source: actor_id,
+                target: target_id,
+            }),
+            _ => None,
+        };
+
+        if let GamePhase::Night { actions, .. } = &mut self.phase {
+            if let Some(action) = action_opt {
+                actions.push(action);
             }
         } else {
             panic!("add_night_action called when not GamePhase::Night")
-        }
+        };
     }
 
-    fn get_vote_options(&self) -> slice::Iter<(ChatId, String)> {
+    fn get_vote_options(&self) -> Vec<(ChatId, String)> {
         if let GamePhase::Voting { .. } = self.phase {
             let base_options = vec![(VOTE_OPTION_NOBODY, String::from("Nobody"))];
 
-            self.players
+            let mut options = self
+                .players
                 .iter()
                 .filter(|p| p.is_alive)
                 .map(|p| (p.chat_id, p.username.clone()))
                 .chain(base_options)
-                .collect::<Vec<_>>()
-                .iter()
+                .collect::<Vec<_>>();
+
+            options.push((VOTE_OPTION_NOBODY, String::from("Nobody")));
+            options
         } else {
             panic!("get_vote_options called when not in GamePhase::Voting")
         }
     }
 
-    fn get_voters(&self) -> slice::Iter<Player> {
+    fn get_voters(&self) -> Vec<&Player> {
         if let GamePhase::Voting { .. } = self.phase {
             self.players
                 .iter()
                 .filter(|p| p.is_alive)
-                .map(|p| *p)
                 .collect::<Vec<_>>()
-                .iter()
         } else {
             panic!("get_voters called when not in GamePhase::Voting")
         }
     }
 
-    fn add_vote_msg_ids(&mut self, poll_msg_ids: HashMap<ChatId, MessageId>) {
-        if let GamePhase::Voting { poll_id_map, .. } = &mut self.phase {
-            poll_msg_ids.clone_into(poll_id_map);
-        } else {
-            panic!("add_vote_msg_ids called when not in GamePhase::Voting")
-        }
-    }
-
     fn add_vote(&mut self, voter_id: teloxide::types::ChatId, choices: Vec<i32>) {
-        if let GamePhase::Voting { votes, .. } = &mut self.phase {
-            let vote_options = self.get_vote_options().collect::<Vec<_>>();
-            let chosen_ids = choices
-                .iter()
-                .map(|i| vote_options[*i as usize].0)
-                .collect::<Vec<_>>();
+        let vote_options = self.get_vote_options();
+        let chosen_ids = choices
+            .iter()
+            .map(|i| vote_options[*i as usize].0)
+            .collect::<Vec<_>>();
 
+        if let GamePhase::Voting { votes, .. } = &mut self.phase {
             votes.insert(voter_id, chosen_ids);
         } else {
             panic!("add_vote called when not in GamePhase::Voting")
         }
     }
 
-    fn get_verdict_options(&self) -> slice::Iter<Verdict> {
+    fn get_verdict_options(&self) -> Vec<Verdict> {
         if let GamePhase::Trial { .. } = self.phase {
-            vec![Verdict::Guilty, Verdict::Innocent, Verdict::Abstain].iter()
+            vec![Verdict::Guilty, Verdict::Innocent, Verdict::Abstain]
         } else {
             panic!("get_verdict_options called when not in GamePhase::Trial")
         }
     }
 
-    fn get_jury(&self) -> slice::Iter<Player> {
+    fn get_jury(&self) -> Vec<&Player> {
         if let GamePhase::Trial {
             defendant_id: defendant,
             ..
-        } = self.phase
+        } = &self.phase
         {
             self.players
                 .iter()
-                .filter(|p| p.is_alive && p.chat_id != defendant)
-                .map(|p| *p)
+                .filter(|p| p.is_alive && p.chat_id != *defendant)
                 .collect::<Vec<_>>()
-                .iter()
         } else {
             panic!("get_jury called when not in GamePhase::Trial")
         }
     }
 
     fn add_verdict(&mut self, juror_id: ChatId, chosen: i32) {
+        let verdict = *self
+            .get_verdict_options()
+            .iter()
+            .nth(chosen as usize)
+            .unwrap();
         if let GamePhase::Trial { verdicts, .. } = &mut self.phase {
-            verdicts.insert(
-                juror_id,
-                *self.get_verdict_options().nth(chosen as usize).unwrap(),
-            );
+            verdicts.insert(juror_id, verdict);
         } else {
             panic!("add_verdict called when not in GamePhase::Trial")
+        }
+    }
+
+    fn add_poll_msg_ids(&mut self, poll_msg_ids: HashMap<ChatId, MessageId>) {
+        match &mut self.phase {
+            GamePhase::Voting { poll_id_map, .. } => poll_msg_ids.clone_into(poll_id_map),
+            GamePhase::Trial { poll_id_map, .. } => poll_msg_ids.clone_into(poll_id_map),
+            _ => {
+                panic!("get_poll_msg_ids called when not in GamePhase::Voting or GamePhase::Trial")
+            }
+        }
+    }
+
+    fn get_poll_msg_ids(&self) -> HashMap<ChatId, MessageId> {
+        match &self.phase {
+            GamePhase::Voting { poll_id_map, .. } => poll_id_map.clone(),
+            GamePhase::Trial { poll_id_map, .. } => poll_id_map.clone(),
+            _ => {
+                panic!("get_poll_msg_ids called when not in GamePhase::Voting or GamePhase::Trial")
+            }
         }
     }
 }
