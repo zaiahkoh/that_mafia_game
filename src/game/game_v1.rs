@@ -1,11 +1,8 @@
+use rand::{seq::SliceRandom, thread_rng};
 use teloxide::types::{ChatId, MessageId};
 
-use crate::game_interface::{Game, GamePhase, Player};
-use std::{
-    collections::{HashMap, HashSet},
-    fmt::format,
-    slice,
-};
+use crate::game::{Game, GamePhase, Player};
+use std::collections::{HashMap, HashSet};
 
 use super::{Action, Role, Verdict, NOBODY_CHAT_ID, NOBODY_USERNAME, VOTE_OPTION_NOBODY};
 
@@ -121,7 +118,7 @@ impl GameV1 {
             }
 
             let (top_target, top_vote_count) =
-                tally.iter().max_by_key(|(_k, v)| v.clone()).unwrap();
+                tally.iter().max_by_key(|(_k, v)| *v).unwrap();
             let tied_targets = tally
                 .iter()
                 .filter(|(_k, v)| *v == top_vote_count)
@@ -311,8 +308,25 @@ impl Game for GameV1 {
     where
         Self: Sized,
     {
+        let player_count = lobby.players.len();
+        let mut roles = vec![Role::Civilian; player_count];
+        roles[0] = Role::Mafia;
+        roles.shuffle(&mut thread_rng());
+
+        let players = lobby
+            .players
+            .iter()
+            .zip(roles)
+            .map(|(p, r)| Player {
+                chat_id: p.player_id,
+                username: p.username.clone(),
+                is_alive: true,
+                role: r,
+            })
+            .collect::<Vec<_>>();
+
         GameV1 {
-            players: vec![],
+            players,
             phase: GamePhase::Night {
                 actions: Vec::new(),
             },

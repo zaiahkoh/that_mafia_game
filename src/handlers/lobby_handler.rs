@@ -1,8 +1,8 @@
 use teloxide::{prelude::*, utils::command::BotCommands};
 
 use super::{game_handler::start_night, AsyncBotState};
-use crate::game_interface::Game;
-use crate::game_interface::game_v1::GameV1;
+use crate::game::Game;
+use crate::game::game_v1::GameV1;
 use crate::{game_manager::GameManager, lobby_manager::LobbyManager};
 
 pub fn get_lobby_handler() -> Handler<
@@ -47,7 +47,7 @@ async fn lobby_handler(
     let text = match cmd {
         LobbyCommand::Help => LobbyCommand::descriptions().to_string(),
         LobbyCommand::Players => {
-            let mut state_lock = bot_state.lock().unwrap();
+            let state_lock = bot_state.lock().unwrap();
             match state_lock.lobby_manager.get_chats_lobby(msg.chat.id) {
                 Some(lobby) => {
                     let host_id = lobby.host;

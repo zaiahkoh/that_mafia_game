@@ -10,7 +10,6 @@ mod handlers;
 mod lobby_manager;
 mod game_manager;
 mod game;
-mod game_interface;
 
 pub async fn start_mafia_bot() -> Result<(), Box<dyn Error>> {
     pretty_env_logger::init();

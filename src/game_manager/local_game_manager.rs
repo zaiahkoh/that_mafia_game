@@ -1,5 +1,5 @@
 use super::GameManager;
-use crate::game_interface::Game;
+use crate::game::Game;
 use rand::Rng;
 use std::collections::HashMap;
 use teloxide::types::ChatId;
@@ -40,6 +40,11 @@ impl GameManager for LocalGameManager {
         }
 
         self.games.insert(game_id, game);
+    }
+
+    fn remove_game(&mut self, chat_id: ChatId) -> Option<Box<dyn Game>> {
+        let game_id = self.player_map.get(&chat_id)?;
+        self.games.remove(game_id)
     }
 
     fn quit_game(&mut self, chat_id: ChatId) -> Result<&mut dyn Game, &'static str> {
