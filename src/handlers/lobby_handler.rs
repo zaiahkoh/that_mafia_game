@@ -1,7 +1,8 @@
 use teloxide::{prelude::*, utils::command::BotCommands};
 
-use super::AsyncBotState;
-use crate::lobby_manager::LobbyManager;
+use super::{game_handler::start_night, AsyncBotState};
+use crate::game::{game_v1::GameV1, Game};
+use crate::{game_manager::GameManager, lobby_manager::LobbyManager};
 
 pub fn get_lobby_handler() -> Handler<
     'static,
@@ -9,16 +10,17 @@ pub fn get_lobby_handler() -> Handler<
     Result<(), teloxide::RequestError>,
     teloxide::dispatching::DpHandlerDescription,
 > {
-    dptree::filter(|msg: Message, bot_state: AsyncBotState| {
-        bot_state
-            .lock()
-            .unwrap()
-            .lobby_manager
-            .get_chats_lobby(msg.chat.id)
-            .is_some()
-    })
-    .filter_command::<LobbyCommand>()
-    .endpoint(lobby_handler)
+    Update::filter_message()
+        .filter(|msg: Message, bot_state: AsyncBotState| {
+            bot_state
+                .lock()
+                .unwrap()
+                .lobby_manager
+                .get_chats_lobby(msg.chat.id)
+                .is_some()
+        })
+        .filter_command::<LobbyCommand>()
+        .endpoint(lobby_handler)
 }
 
 #[derive(BotCommands, Clone)]
@@ -30,6 +32,8 @@ enum LobbyCommand {
     Players,
     #[command(description = "Quit lobby")]
     Quit,
+    #[command(description = "Start game")]
+    Start,
 }
 
 async fn lobby_handler(
@@ -38,10 +42,11 @@ async fn lobby_handler(
     msg: Message,
     cmd: LobbyCommand,
 ) -> Result<(), teloxide::RequestError> {
+    let mut game_opt: Option<Box<dyn Game>> = None;
     let text = match cmd {
         LobbyCommand::Help => LobbyCommand::descriptions().to_string(),
         LobbyCommand::Players => {
-            let mut state_lock = bot_state.lock().unwrap();
+            let state_lock = bot_state.lock().unwrap();
             match state_lock.lobby_manager.get_chats_lobby(msg.chat.id) {
                 Some(lobby) => {
                     let host_id = lobby.host;
@@ -74,9 +79,33 @@ async fn lobby_handler(
                 Err(message) => format!("Encountered error: {}", message),
             }
         }
+        LobbyCommand::Start => {
+            let mut state_lock = bot_state.lock().unwrap();
+            let lobby_manager = &mut state_lock.lobby_manager;
+
+            if let Some(lobby) = lobby_manager.get_chats_lobby(msg.chat.id) {
+                if lobby.players.len() >= 3 {
+                    let game = GameV1::from_lobby(lobby);
+                    if let Err(err) = lobby_manager.close_lobby(lobby.lobby_id) {
+                        panic!("{err}");
+                    };
+                    game_opt = Some(game.snapshot());
+                    state_lock.game_manager.add_game(Box::new(game));
+
+                    format!("Started lobby")
+                } else {
+                    format!("Cannot start game: Need 3 or more players")
+                }
+            } else {
+                format!("Internal error: failed to find lobby to start")
+            }
+        }
     };
 
     bot.send_message(msg.chat.id, text).await?;
+    if let Some(_) = game_opt {
+        start_night(msg.chat.id, bot, bot_state).await;
+    }
 
     Ok(())
 }
