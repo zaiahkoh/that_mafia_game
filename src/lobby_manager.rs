@@ -1,6 +1,6 @@
-pub mod local_lobby_manager;
-
 use teloxide::prelude::*;
+
+pub mod local_lobby_manager;
 
 #[derive(Eq, Hash, PartialEq, Copy, Clone, derive_more::Display)]
 pub struct LobbyId(pub i32);

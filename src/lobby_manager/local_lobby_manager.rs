@@ -1,7 +1,7 @@
+use rand::Rng;
 use std::collections::HashMap;
 
 use crate::lobby_manager::*;
-use rand::Rng;
 
 pub struct LocalLobbyManager {
     lobbies: HashMap<LobbyId, Lobby>,
@@ -68,7 +68,7 @@ impl LobbyManager for LocalLobbyManager {
         let players = self.lobbies.get(&lobby_id).unwrap().players.iter();
         for p in players {
             self.player_map.remove(&p.player_id);
-        };
+        }
         self.lobbies.remove(&lobby_id);
 
         Ok(())

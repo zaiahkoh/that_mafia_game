@@ -1,13 +1,11 @@
 use rand::{seq::SliceRandom, thread_rng};
+use std::collections::{HashMap, HashSet};
 use teloxide::types::{ChatId, MessageId};
 
+use super::*;
 use crate::game::{Game, GamePhase, Player};
-use std::collections::{HashMap, HashSet};
-
-use super::{Action, Role, Verdict, NOBODY_CHAT_ID, NOBODY_USERNAME, VOTE_OPTION_NOBODY};
 
 #[derive(Clone)]
-
 pub struct GameV1 {
     pub players: Vec<Player>,
     pub phase: GamePhase,
@@ -117,8 +115,7 @@ impl GameV1 {
                 }
             }
 
-            let (top_target, top_vote_count) =
-                tally.iter().max_by_key(|(_k, v)| *v).unwrap();
+            let (top_target, top_vote_count) = tally.iter().max_by_key(|(_k, v)| *v).unwrap();
             let tied_targets = tally
                 .iter()
                 .filter(|(_k, v)| *v == top_vote_count)

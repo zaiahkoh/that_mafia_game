@@ -1,9 +1,9 @@
-use super::GameManager;
-use crate::game::Game;
 use rand::Rng;
 use std::collections::HashMap;
 use teloxide::types::ChatId;
-// use crate::game_interface::game_v1::GameV1;
+
+use super::GameManager;
+use crate::game::Game;
 
 #[derive(Eq, Hash, PartialEq, Copy, Clone, derive_more::Display)]
 pub struct GameId(pub i32);

@@ -1,6 +1,7 @@
-use crate::lobby_manager::Lobby;
 use std::{collections::HashMap, fmt};
 use teloxide::types::{ChatId, MessageId};
+
+use crate::lobby_manager::Lobby;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Role {

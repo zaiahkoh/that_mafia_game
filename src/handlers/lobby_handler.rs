@@ -1,8 +1,7 @@
 use teloxide::{prelude::*, utils::command::BotCommands};
 
 use super::{game_handler::start_night, AsyncBotState};
-use crate::game::Game;
-use crate::game::game_v1::GameV1;
+use crate::game::{game_v1::GameV1, Game};
 use crate::{game_manager::GameManager, lobby_manager::LobbyManager};
 
 pub fn get_lobby_handler() -> Handler<
@@ -87,7 +86,9 @@ async fn lobby_handler(
             if let Some(lobby) = lobby_manager.get_chats_lobby(msg.chat.id) {
                 if lobby.players.len() >= 3 {
                     let game = GameV1::from_lobby(lobby);
-                    lobby_manager.close_lobby(lobby.lobby_id);
+                    if let Err(err) = lobby_manager.close_lobby(lobby.lobby_id) {
+                        panic!("{err}");
+                    };
                     game_opt = Some(game.snapshot());
                     state_lock.game_manager.add_game(Box::new(game));
 
