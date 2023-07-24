@@ -5,27 +5,27 @@ use crate::lobby_manager::*;
 
 pub struct LocalLobbyManager {
     lobbies: HashMap<LobbyId, Lobby>,
-    player_map: HashMap<ChatId, LobbyId>,
+    user_map: HashMap<ChatId, LobbyId>,
 }
 
 impl LocalLobbyManager {
     pub fn new() -> LocalLobbyManager {
         LocalLobbyManager {
             lobbies: HashMap::new(),
-            player_map: HashMap::new(),
+            user_map: HashMap::new(),
         }
     }
 }
 
 impl LobbyManager for LocalLobbyManager {
     fn get_chats_lobby(&self, chat_id: teloxide::types::ChatId) -> Option<&Lobby> {
-        let lobby_id = self.player_map.get(&chat_id)?;
+        let lobby_id = self.user_map.get(&chat_id)?;
         self.lobbies.get(lobby_id)
     }
 
-    fn create_lobby(&mut self, player: Player) -> Result<&Lobby, &'static str> {
-        if let Some(_) = self.get_chats_lobby(player.player_id) {
-            return Err("Player is already in a lobby");
+    fn create_lobby(&mut self, user: User) -> Result<&Lobby, &'static str> {
+        if let Some(_) = self.get_chats_lobby(user.chat_id) {
+            return Err("User is already in a lobby");
         }
 
         let mut rng = rand::thread_rng();
@@ -33,31 +33,31 @@ impl LobbyManager for LocalLobbyManager {
         while let Some(_) = self.lobbies.get(&lobby_id) {
             lobby_id = LobbyId(rng.gen_range(1_000..10_000));
         }
-        let player_id = player.player_id.clone();
+        let chat_id = user.chat_id.clone();
 
         let lobby = Lobby {
-            host: player.player_id,
-            players: vec![player],
+            host_id: user.chat_id,
+            users: vec![user],
             lobby_id,
         };
 
         self.lobbies.insert(lobby_id, lobby);
-        self.player_map.insert(player_id, lobby_id);
+        self.user_map.insert(chat_id, lobby_id);
 
         return Ok(self.lobbies.get(&lobby_id).unwrap());
     }
 
-    fn join_lobby(&mut self, lobby_id: LobbyId, player: Player) -> Result<&Lobby, &'static str> {
-        if let Some(_) = self.get_chats_lobby(player.player_id) {
-            return Err("Player is already in a lobby");
+    fn join_lobby(&mut self, lobby_id: LobbyId, user: User) -> Result<&Lobby, &'static str> {
+        if let Some(_) = self.get_chats_lobby(user.chat_id) {
+            return Err("User is already in a lobby");
         }
 
-        let player_id = player.player_id;
+        let chat_id = user.chat_id;
 
         match self.lobbies.get_mut(&lobby_id) {
             Some(lobby) => {
-                lobby.players.push(player);
-                self.player_map.insert(player_id, lobby.lobby_id);
+                lobby.users.push(user);
+                self.user_map.insert(chat_id, lobby.lobby_id);
                 Ok(lobby)
             }
             None => Err("Lobby does not exist"),
@@ -65,9 +65,9 @@ impl LobbyManager for LocalLobbyManager {
     }
 
     fn close_lobby(&mut self, lobby_id: LobbyId) -> Result<(), &'static str> {
-        let players = self.lobbies.get(&lobby_id).unwrap().players.iter();
-        for p in players {
-            self.player_map.remove(&p.player_id);
+        let users = self.lobbies.get(&lobby_id).unwrap().users.iter();
+        for p in users {
+            self.user_map.remove(&p.chat_id);
         }
         self.lobbies.remove(&lobby_id);
 
@@ -75,21 +75,21 @@ impl LobbyManager for LocalLobbyManager {
     }
 
     fn quit_lobby(&mut self, chat_id: ChatId) -> Result<LobbyId, &'static str> {
-        if let Some(lobby_id) = self.player_map.get(&chat_id) {
+        if let Some(lobby_id) = self.user_map.get(&chat_id) {
             if let Some(lobby) = self.lobbies.get_mut(&lobby_id) {
-                if lobby.players.len() == 1 {
+                if lobby.users.len() == 1 {
                     self.lobbies.remove(lobby_id);
-                } else if lobby.host == chat_id {
-                    lobby.players.retain(|p| p.player_id != chat_id);
-                    lobby.host = lobby.players[0].player_id;
+                } else if lobby.host_id == chat_id {
+                    lobby.users.retain(|p| p.chat_id != chat_id);
+                    lobby.host_id = lobby.users[0].chat_id;
                 }
 
                 let ret = lobby_id.clone();
-                self.player_map.remove(&chat_id);
+                self.user_map.remove(&chat_id);
 
                 Ok(ret)
             } else {
-                Err("Internal error: player_map and lobbies not synced")
+                Err("Internal error: user_map and lobbies not synced")
             }
         } else {
             Err("Chat ID is not in any lobby")

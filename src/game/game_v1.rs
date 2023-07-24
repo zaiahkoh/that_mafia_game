@@ -305,17 +305,17 @@ impl Game for GameV1 {
     where
         Self: Sized,
     {
-        let player_count = lobby.players.len();
+        let player_count = lobby.users.len();
         let mut roles = vec![Role::Civilian; player_count];
         roles[0] = Role::Mafia;
         roles.shuffle(&mut thread_rng());
 
         let players = lobby
-            .players
+            .users
             .iter()
             .zip(roles)
             .map(|(p, r)| Player {
-                chat_id: p.player_id,
+                chat_id: p.chat_id,
                 username: p.username.clone(),
                 is_alive: true,
                 role: r,

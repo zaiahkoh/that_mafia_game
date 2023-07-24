@@ -49,14 +49,14 @@ async fn lobby_handler(
             let state_lock = bot_state.lock().unwrap();
             match state_lock.lobby_manager.get_chats_lobby(msg.chat.id) {
                 Some(lobby) => {
-                    let host_id = lobby.host;
+                    let host_id = lobby.host_id;
                     let mut player_index = 0;
                     lobby
-                        .players
+                        .users
                         .iter()
                         .map(|p| -> String {
                             player_index += 1;
-                            if p.player_id == host_id {
+                            if p.chat_id == host_id {
                                 format!("{}. {} (host)", player_index, p.username)
                             } else {
                                 format!("{}. {}", player_index, p.username)
@@ -84,7 +84,7 @@ async fn lobby_handler(
             let lobby_manager = &mut state_lock.lobby_manager;
 
             if let Some(lobby) = lobby_manager.get_chats_lobby(msg.chat.id) {
-                if lobby.players.len() >= 3 {
+                if lobby.users.len() >= 3 {
                     let game = GameV1::from_lobby(lobby);
                     if let Err(err) = lobby_manager.close_lobby(lobby.lobby_id) {
                         panic!("{err}");
